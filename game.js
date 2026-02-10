@@ -194,20 +194,7 @@ mining:"⛏️"
 
   // ---------- Items ----------
   const GOLD_ITEM_ID = "gold"; // <-- if your gold item's id differs, change this string
-const SHOP_SELLS = [
-  { id:"sword",  price:25, stock:1 },
-  { id:"shield", price:30, stock:1 },
-  { id:"bow",    price:20, stock:1 },
-  { id:"staff",  price:20, stock:1 },
-  { id:"arrow",  price:2,  stock:20, bundle:20 } // buys 20 arrows at a time
-];
 
-const SHOP_BUYS = {
-  log:  1,
-  rock: 1,
-  ore:  3,
-  bone: 2
-};
 
 
   // ---------- Wallet (gold does not take inventory slots) ----------
@@ -563,9 +550,10 @@ const DEFAULT_VENDOR_STOCK = [
   { id: "bone", price: 1, bulk: [1, 5] },
   { id: "axe", price: 25, bulk: [1] },
   { id: "pick", price: 25, bulk: [1] },
-  { id: "basic_sword", price: 60, bulk: [1] },
-  { id: "basic_shield", price: 60, bulk: [1] },
-  { id: "basic_bow", price: 75, bulk: [1] }
+  { id: "sword", price: 60, bulk: [1] },
+{ id: "shield", price: 60, bulk: [1] },
+{ id: "bow", price: 75, bulk: [1] }
+
 ];
 
 
@@ -593,7 +581,8 @@ const DEFAULT_VENDOR_STOCK = [
     const by = startCastle.y0 + 3;
     placeInteractable("bank", bx, by);
 placeInteractable("vendor", bx + 2, by);
-placeInteractable("shop", 9, 13); // shopkeeper near starter area
+placeInteractable("vendor", 9, 13); // vendor near starter area
+
 
 
   }
@@ -735,17 +724,6 @@ const winVendor  = document.getElementById("winVendor");
 const iconVendor = document.getElementById("iconVendor");
 
   const iconSet  = document.getElementById("iconSet");
-const winShop = document.getElementById("winShop");
-const shopGoldEl = document.getElementById("shopGold");
-const shopListEl = document.getElementById("shopList");
-const btnShopClose = document.getElementById("btnShopClose");
-const shopTabBuyBtn = document.getElementById("shopTabBuy");
-const shopTabSellBtn = document.getElementById("shopTabSell");
-
-let shopTab = "buy";
-const SHOP_REFRESH_MS = 5*60*1000;
-let shopNextRefreshAt = 0;
-let shopStock = {};
 
 
   let bankAvailable = false;
@@ -920,7 +898,6 @@ if (vendorTabSellBtn) vendorTabSellBtn.addEventListener("click", ()=>{ vendorTab
     bank: false,
     settings: false,
     vendor: false,
-shop:false,
 
   };
 
@@ -977,7 +954,7 @@ if (winVendor) winVendor.classList.toggle("hidden", !windowsOpen.vendor);
   function toggleWindow(name){
     if (name === "bank" && !bankAvailable) return;
   if (name === "vendor" && !vendorAvailable) {
-    chatLine(`<span class="muted">You need to be next to a vendor/shopkeeper to trade.</span>`);
+    chatLine(`<span class="muted">You need to be next to a vendor to trade.</span>`);
     return;
   }
 
@@ -1097,6 +1074,23 @@ makeWindowDraggable(winVendor, document.getElementById("hdrVendor"));
     if (typeof rect.width === "number") winEl.style.width = rect.width + "px";
     if (typeof rect.height === "number") winEl.style.height = rect.height + "px";
   }
+function clampWindowToGameArea(winEl){
+  if (!winEl) return;
+  const gameArea = document.getElementById("gameArea").getBoundingClientRect();
+  const w = winEl.offsetWidth || parseFloat(winEl.style.width) || 0;
+  const h = winEl.offsetHeight || parseFloat(winEl.style.height) || 0;
+
+
+  let nl = parseFloat(winEl.style.left || "18");
+  let nt = parseFloat(winEl.style.top  || "70");
+
+  nl = clamp(nl, 8, Math.max(8, gameArea.width  - w - 8));
+  nt = clamp(nt, 8, Math.max(8, gameArea.height - h - 8));
+
+  winEl.style.left = nl + "px";
+  winEl.style.top  = nt + "px";
+}
+
 
   function saveWindowsUI(){
     const data = {
@@ -1105,29 +1099,37 @@ makeWindowDraggable(winVendor, document.getElementById("hdrVendor"));
       equipment: getWindowRect(winEquipment),
       skills: getWindowRect(winSkills),
       bank: getWindowRect(winBank),
-      settings: getWindowRect(winSettings)
+      settings: getWindowRect(winSettings),
+vendor: getWindowRect(winVendor)
+
     };
     localStorage.setItem(WINDOWS_UI_KEY, JSON.stringify(data));
   }
 
   function loadWindowsUI(){
-    const raw = localStorage.getItem(WINDOWS_UI_KEY);
-    if (!raw) return;
-    try{
-      const d = JSON.parse(raw);
-      applyWindowRect(winInventory, d.inventory);
-      applyWindowRect(winEquipment, d.equipment);
-      applyWindowRect(winSkills, d.skills);
-      applyWindowRect(winBank, d.bank);
-      applyWindowRect(winSettings, d.settings);
+  try{
+    const d = JSON.parse(localStorage.getItem("ui_windows") || "{}");
 
-      if (d.windowsOpen){
-        for (const k of Object.keys(windowsOpen)){
-          if (typeof d.windowsOpen[k] === "boolean") windowsOpen[k] = d.windowsOpen[k];
-        }
-      }
-    }catch{}
-  }
+    applyWindowRect(winInventory, d.inventory);
+    applyWindowRect(winEquipment, d.equipment);
+    applyWindowRect(winSkills, d.skills);
+    applyWindowRect(winBank, d.bank);
+    applyWindowRect(winSettings, d.settings);
+
+    // ADD THIS:
+    applyWindowRect(winVendor, d.vendor);
+
+    // ADD THIS:
+    clampWindowToGameArea(winInventory);
+    clampWindowToGameArea(winEquipment);
+    clampWindowToGameArea(winSkills);
+    clampWindowToGameArea(winBank);
+    clampWindowToGameArea(winVendor);
+    clampWindowToGameArea(winSettings);
+
+  }catch(e){}
+}
+
 
   window.addEventListener("mouseup", () => saveWindowsUI());
 
@@ -1969,7 +1971,7 @@ if (toolId === "flint_steel" && targetId === "log") {
     if (it.type === "fire")   return { kind:"fire", index: idx, label:"Campfire", x:it.x, y:it.y };
     if (it.type === "bank")   return { kind:"bank", index: idx, label:"Bank Chest", x:it.x, y:it.y };
     if (it.type === "vendor") return { kind:"vendor", index: idx, label:"Vendor", x:it.x, y:it.y };
-    if (it.type === "shop")   return { kind:"shop", index: idx, label:"Shopkeeper", x:it.x, y:it.y };
+    
   }
 
   // Mobs
@@ -1993,7 +1995,7 @@ if (toolId === "flint_steel" && targetId === "log") {
     if (ent.kind==="res" && ent.label==="Rock") chatLine(`<span class="muted">A mineral rock. Might contain ore.</span>`);
     if (ent.kind==="bank") chatLine(`<span class="muted">A secure bank chest.</span>`);
     if (ent.kind==="vendor") chatLine(`<span class="muted">A traveling vendor. Buys and sells goods.</span>`);
-    if (ent.kind==="shop") chatLine(`<span class="muted">A shopkeeper ready to trade.</span>`);
+    
 
   }
 
@@ -2267,8 +2269,9 @@ function ensureWalkIntoRangeAndAct(){
   }
 
 
-  // ---------- VENDOR / SHOPKEEPER (TRADE) ----------
-  if (t.kind === "vendor" || t.kind === "shop"){
+  // ---------- VENDOR (TRADE) ----------
+  if (t.kind === "vendor"){
+
     const v = interactables[t.index];
     if (!v) return stopAction();
 
@@ -2276,7 +2279,7 @@ function ensureWalkIntoRangeAndAct(){
       const adj = [[1,0],[-1,0],[0,1],[0,-1]]
         .map(([dx,dy])=>({x:v.x+dx,y:v.y+dy}))
         .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction(`No path to ${t.kind === "shop" ? "shopkeeper" : "vendor"}.`);
+      if (!adj.length) return stopAction(`No path to vendor.`);
       adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
       setPathTo(adj[0].x, adj[0].y);
       return;
@@ -2402,10 +2405,10 @@ function ensureWalkIntoRangeAndAct(){
 
     if (style === "melee"){
       addXP(meleeTraining, dmg);
-    } else if (style === "ranged"){
+} else if (style === "ranged"){
       addXP("ranged", dmg);
-      addXP("power", dmg);
     } else {
+
       addXP("sorcery", dmg);
     }
 
@@ -2759,8 +2762,8 @@ if (item.ammo){
         ctx.restore();
       }
 
-if (it.type === "shop"){
-  // shopkeeper marker (draw in WORLD coords; camera/zoom already handled by ctx transform)
+if (it.type === "vendor"){
+  // vendor marker (draw in WORLD coords; camera/zoom already handled by ctx transform)
   const cx = it.x * TILE + TILE/2;
   const cy = it.y * TILE + TILE/2;
 
@@ -3069,12 +3072,6 @@ if (it.type === "shop"){
   opts.push({type:"sep"});
   opts.push({label:"Walk here", onClick:walkHere});
 
-} else if (ent?.kind==="shop"){
-  opts.push({label:"Trade", onClick:()=>beginInteraction(ent)});
-  opts.push({label:"Examine Shopkeeper", onClick:()=>examineEntity(ent)});
-  opts.push({type:"sep"});
-  opts.push({label:"Walk here", onClick:walkHere});
-
 } else {
 
       if (isWalkable(tx,ty)) opts.push({label:"Walk here", onClick:walkHere});
@@ -3340,13 +3337,15 @@ if (it.type === "shop"){
       bankAvailable = false;
     }
     updateBankIcon();
-// vendor availability (any trade source: vendor OR shop)
+// vendor availability (vendor only)
+
 vendorAvailable = false;
 vendorInRangeIndex = -1;
 
 for (let i=0; i<interactables.length; i++){
   const it = interactables[i];
-  if (it.type !== "vendor" && it.type !== "shop") continue;
+  if (it.type !== "vendor") continue;
+
   if (inRangeOfTile(it.x, it.y, 1.1)){
     vendorAvailable = true;
     vendorInRangeIndex = i;
@@ -3446,7 +3445,7 @@ if (windowsOpen.vendor && !vendorAvailable){
       } else if (player.target.kind==="mob"){
         const m=mobs[player.target.index];
         if (m?.alive){ tx=m.x; ty=m.y; }
-      } else if (player.target.kind==="bank" || player.target.kind==="vendor" || player.target.kind==="shop"){
+      } else if (player.target.kind==="bank" || player.target.kind==="vendor"){
         const b=interactables[player.target.index];
         if (b){ tx=b.x; ty=b.y; }
       }

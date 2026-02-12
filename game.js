@@ -3427,58 +3427,176 @@ if (it.type === "vendor"){
       ctx.fill();
     }
   }
+function drawPlayerWeapon(cx, cy, fx, fy){
+  // position weapon slightly to the side you're "favoring"
+  const side = (fx !== 0) ? fx : 1; // default right if facing up/down
+  const wx = cx + side * 10;
+  const wy = cy + 2;
+
+  if (player.class === "Warrior"){
+    // sword
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillRect(wx-1, wy-10, 2, 12);          // blade
+    ctx.fillStyle = "#a16207";
+    ctx.fillRect(wx-3, wy+1, 6, 2);            // guard
+    ctx.fillStyle = "#854d0e";
+    ctx.fillRect(wx-1, wy+3, 2, 5);            // handle
+    } else if (player.class === "Ranger"){
+    // bow (flip when facing left)
+    ctx.save();
+    ctx.translate(wx, wy);
+    ctx.scale(side, 1); // side is -1 when facing left, +1 when facing right
+
+    ctx.strokeStyle = "#a16207";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(-2, -2, 8, -0.9, 0.9);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(255,255,255,.65)"; // string
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(4, -10);
+    ctx.lineTo(4, 6);
+    ctx.stroke();
+
+    ctx.restore();
+
+  } else {
+    // staff (Mage)
+    ctx.fillStyle = "#7c3aed";
+    ctx.beginPath();
+    ctx.arc(wx, wy-10, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#a16207";
+    ctx.fillRect(wx-1, wy-8, 2, 16);
+  }
+}
 
   function drawPlayer(){
-    ctx.fillStyle="rgba(0,0,0,.25)";
-    ctx.beginPath();
-    ctx.ellipse(player.px, player.py+10, 10, 5, 0, 0, Math.PI*2);
-    ctx.fill();
+  const t = now();
+  const moving = !!(player.path && player.path.length);
+  const bob = moving ? Math.sin(t*0.015)*1.2 : Math.sin(t*0.008)*0.35;
+  const step = moving ? Math.sin(t*0.030) : 0;
 
-    ctx.fillStyle=player.color;
-    ctx.beginPath();
-    ctx.arc(player.px, player.py, 10, 0, Math.PI*2);
-    ctx.fill();
+  const cx = player.px;
+  const cy = player.py + bob;
 
-    ctx.fillStyle="rgba(255,255,255,.12)";
-    ctx.beginPath();
-    ctx.arc(player.px-3, player.py-4, 4, 0, Math.PI*2);
-    ctx.fill();
+  const fx = player.facing.x || 0;
+  const fy = player.facing.y || 1;
 
-    if (player.path && player.path.length){
-      ctx.fillStyle="rgba(94,234,212,.25)";
-      for (const n of player.path) ctx.fillRect(n.x*TILE+10, n.y*TILE+10, 12, 12);
-    }
+  // shadow
+  ctx.fillStyle="rgba(0,0,0,.28)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+14, 10 + Math.abs(step)*1.5, 5, 0, 0, Math.PI*2);
+  ctx.fill();
 
-    const a=player.action;
-    if (a.type==="woodcut" || a.type==="mine"){
-      const pct = actionProgress();
-      const swing = Math.sin(pct * Math.PI) * 1.0;
-      const dx = player.facing.x || 0;
-      const dy = player.facing.y || 1;
 
-      const ox = player.px + dx*10;
-      const oy = player.py + dy*10;
 
-      ctx.save();
-      ctx.translate(ox, oy);
-      const baseAng = Math.atan2(dy, dx);
-      const ang = baseAng + (-0.9 + swing*1.8);
-      ctx.rotate(ang);
+  // boots (2-frame walk illusion)
+  const footY = cy+12;
+  const lift = moving ? (step>0 ? 1.5 : -1.5) : 0;
+  ctx.fillStyle = "#111827";
+  ctx.fillRect(cx-8, footY + lift, 6, 3);
+  ctx.fillRect(cx+2, footY - lift, 6, 3);
 
-      ctx.fillStyle="rgba(0,0,0,.35)";
-      ctx.fillRect(-2, -10, 4, 18);
+  // torso
+  ctx.fillStyle="rgba(17,24,39,.88)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+6, 7.5, 9, 0, 0, Math.PI*2);
+  ctx.fill();
 
-      if (a.type==="woodcut"){
-        ctx.fillStyle="#cbd5e1";
-        ctx.fillRect(-8, -14, 14, 6);
-      } else {
-        ctx.fillStyle="#cbd5e1";
-        ctx.fillRect(-6, -14, 12, 6);
-        ctx.fillRect(-2, -18, 4, 10);
-      }
-      ctx.restore();
-    }
+  // torso outline
+  ctx.strokeStyle="rgba(0,0,0,.45)";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy+6, 7.5, 9, 0, 0, Math.PI*2);
+  ctx.stroke();
+
+  // head
+  const headY = cy-6;
+  ctx.fillStyle="#f2c9a0";
+  ctx.beginPath();
+  ctx.arc(cx, headY, 7, 0, Math.PI*2);
+  ctx.fill();
+
+  // head outline
+  ctx.strokeStyle="rgba(0,0,0,.45)";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(cx, headY, 7, 0, Math.PI*2);
+  ctx.stroke();
+
+  // hood/hair tint (uses class color, but only on the top half)
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = player.color;
+  ctx.beginPath();
+  ctx.arc(cx, headY-1, 7.3, Math.PI, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // eyes: look in facing direction so it feels alive
+  const lookX = clamp(fx, -1, 1) * 1.2;
+  const lookY = clamp(fy, -1, 1) * 0.6;
+  ctx.fillStyle="rgba(0,0,0,.65)";
+  ctx.beginPath();
+  ctx.arc(cx-2 + lookX, headY-1 + lookY, 1.1, 0, Math.PI*2);
+  ctx.arc(cx+2 + lookX, headY-1 + lookY, 1.1, 0, Math.PI*2);
+  ctx.fill();
+
+  // belt accent
+  ctx.strokeStyle="rgba(251,191,36,.85)";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(cx-5, cy+7);
+  ctx.lineTo(cx+5, cy+7);
+  ctx.stroke();
+
+  // weapon (don’t show if you’re already drawing an axe/pick swing)
+  const a = player.action;
+  const doingTool = (a.type==="woodcut" || a.type==="mine");
+  if (!doingTool){
+    drawPlayerWeapon(cx, cy+4, fx, fy);
   }
+
+  // path preview (keep your existing behavior)
+  if (player.path && player.path.length){
+    ctx.fillStyle="rgba(94,234,212,.25)";
+    for (const n of player.path) ctx.fillRect(n.x*TILE+10, n.y*TILE+10, 12, 12);
+  }
+
+  // keep your existing chop/mine swing drawing
+  if (a.type==="woodcut" || a.type==="mine"){
+    const pct = actionProgress();
+    const swing = Math.sin(pct * Math.PI) * 1.0;
+    const dx = player.facing.x || 0;
+    const dy = player.facing.y || 1;
+
+    const ox = player.px + dx*10;
+    const oy = player.py + dy*10;
+
+    ctx.save();
+    ctx.translate(ox, oy);
+    const baseAng = Math.atan2(dy, dx);
+    const ang = baseAng + (-0.9 + swing*1.8);
+    ctx.rotate(ang);
+
+    ctx.fillStyle="rgba(0,0,0,.35)";
+    ctx.fillRect(-2, -10, 4, 18);
+
+    if (a.type==="woodcut"){
+      ctx.fillStyle="#cbd5e1";
+      ctx.fillRect(-8, -14, 14, 6);
+    } else {
+      ctx.fillStyle="#cbd5e1";
+      ctx.fillRect(-6, -14, 12, 6);
+      ctx.fillRect(-2, -18, 4, 10);
+    }
+    ctx.restore();
+  }
+}
+
 
   function drawHover(worldX, worldY, screenX, screenY){
     const tx=Math.floor(worldX/TILE);

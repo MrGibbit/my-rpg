@@ -20,12 +20,19 @@
           <div id="hudName">Adventurer</div>
           <div id="hudHPText">HP 30 / 30</div>
         </div>
+      <div class="coordCard">
+        <div class="coordRow"><span class="coordKey">P</span><span class="coordVal" id="coordPlayer">0, 0</span></div>
+        <div class="coordRow"><span class="coordKey">M</span><span class="coordVal" id="coordMouse">—</span></div>
+      </div>
+
         <div class="hpBar"><div id="hudHPBar"></div></div>
         <div class="hpRow" style="margin-top:8px; font-weight:800; color:rgba(169,183,198,.95);">
           <div id="hudClass">Warrior</div>
           <div style="display:flex; gap:10px; align-items:center;">
   <div id="hudGoldText">Gold: 0</div>
   <div id="hudQuiverText">Quiver: 0</div>
+<div id="hudCombatText">Combat: 3</div>
+
 </div>
 
         </div>
@@ -101,7 +108,8 @@
 
 
       <div class="winHeader" id="hdrSkills">
-        <div class="title">Skills</div>
+        <div class="title">Skills <span class="pill" id="skillsCombatPill">Combat: 3</span></div>
+
         <button class="winClose" data-close="skills" title="Close">✕</button>
       </div>
       <div class="winBody">

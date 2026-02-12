@@ -67,10 +67,6 @@
   for (let x=2; x<W-2; x++) { map[RIVER_Y][x]=1; map[RIVER_Y+1][x]=1; }
   for (const bx of [7, 8, 42, 43]) { map[RIVER_Y][bx]=5; map[RIVER_Y+1][bx]=5; }
 
-  for (let y=4; y<14; y++) { map[y][18]=2; map[y][19]=2; }
-  for (let y=26; y<37; y++) { map[y][10]=2; map[y][11]=2; }
-  for (let x=28; x<36; x++) { map[30][x]=2; map[31][x]=2; }
-
   function stampCastle(x0, y0, w, h) {
     for (let y=y0; y<y0+h; y++) {
       for (let x=x0; x<x0+w; x++) {
@@ -89,7 +85,8 @@
   const startCastle = stampCastle(2, 2, 12, 8);
   for (let y=startCastle.gateY; y<=RIVER_Y+1; y++) { map[y][startCastle.gateX]=5; map[y][startCastle.gateX-1]=5; }
   for (let x=Math.min(startCastle.gateX-1, 7); x<=Math.max(startCastle.gateX, 8); x++) map[RIVER_Y-1][x]=5;
-  for (let y=RIVER_Y+2; y<H-2; y++) { map[y][8]=5; if (y%3===0) map[y][9]=5; }
+  for (let y=RIVER_Y+2; y<H-2; y++) { map[y][8]=5; }
+
   for (let x=8; x<=42; x++) map[RIVER_Y-3][x]=5;
   for (let y=RIVER_Y-3; y<=RIVER_Y+1; y++) map[y][42]=5;
 
@@ -185,6 +182,58 @@ firemaking:{ name:"Firemaking", xp:0 },
     woodcutting:"🪵", firemaking:"🔥", cooking:"🍳", mining:"⛏️"
 
   };
+// ---------- Combat level (RuneScape-style, OSRS-like; no Prayer in this game) ----------
+function getSkillLevel(key){
+  const s = Skills[key];
+  return levelFromXP(s ? s.xp : 0);
+}
+
+function calcCombatLevelFromLevels(lv){
+  const def = lv.defense|0;
+  const hp  = lv.health|0;
+  const atk = lv.accuracy|0;
+  const str = lv.power|0;
+  const rng = lv.ranged|0;
+  const mag = lv.sorcery|0;
+
+  const base  = (def + hp) / 4;
+  const melee = (atk + str) / 2;
+  const range = (rng * 3) / 2;
+  const mage  = (mag * 3) / 2;
+
+  return Math.floor(base + Math.max(melee, range, mage));
+}
+
+function getPlayerCombatLevel(){
+  return calcCombatLevelFromLevels({
+    accuracy: getSkillLevel("accuracy"),
+    power:    getSkillLevel("power"),
+    defense:  getSkillLevel("defense"),
+    ranged:   getSkillLevel("ranged"),
+    sorcery:  getSkillLevel("sorcery"),
+    health:   getSkillLevel("health"),
+  });
+}
+
+// used to tint "Attack X" in the right-click menu
+function ctxLevelClass(playerLvl, enemyLvl){
+  const d = (enemyLvl|0) - (playerLvl|0);
+  if (d >= 5) return "lvlBad";
+  if (d <= -5) return "lvlGood";
+  return "lvlWarn";
+}
+function levelTextForCls(cls){
+  if (cls === "lvlGood") return "rgba(94,234,212,.95)";
+  if (cls === "lvlBad")  return "rgba(251,113,133,.95)";
+  return "rgba(251,191,36,.95)";
+}
+function levelStrokeForCls(cls){
+  if (cls === "lvlGood") return "rgba(94,234,212,.75)";
+  if (cls === "lvlBad")  return "rgba(251,113,133,.75)";
+  return "rgba(251,191,36,.75)";
+}
+
+
 
   const lastSkillLevel = Object.create(null);
   const lastSkillXPMsgAt = Object.create(null);
@@ -525,6 +574,11 @@ firemaking:{ name:"Firemaking", xp:0 },
   const hudHPBarEl = document.getElementById("hudHPBar");
   const hudQuiverTextEl = document.getElementById("hudQuiverText");
   const hudGoldTextEl = document.getElementById("hudGoldText");
+const hudCombatTextEl = document.getElementById("hudCombatText");
+
+  const coordPlayerEl = document.getElementById("coordPlayer");
+  const coordMouseEl  = document.getElementById("coordMouse");
+
 
 
   function recalcMaxHPFromHealth(){
@@ -544,7 +598,31 @@ firemaking:{ name:"Firemaking", xp:0 },
     hudHPBarEl.style.width = `${(player.maxHp>0 ? (player.hp/player.maxHp) : 0) * 100}%`;
     if (hudGoldTextEl) hudGoldTextEl.textContent = `Gold: ${getGold()}`;
     hudQuiverTextEl.textContent = `Quiver: ${getQuiverCount()}`;
+if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLevel()}`;
+
   }
+  function updateCoordsHUD(){
+    if (!coordPlayerEl && !coordMouseEl) return;
+
+    if (coordPlayerEl){
+      const p = `${player.x}, ${player.y}`;
+      if (coordPlayerEl.textContent !== p) coordPlayerEl.textContent = p;
+    }
+
+    if (!mouseSeen){
+      if (coordMouseEl && coordMouseEl.textContent !== "—") coordMouseEl.textContent = "—";
+      return;
+    }
+
+    const worldX = (mouseX/VIEW_W)*viewWorldW() + camera.x;
+    const worldY = (mouseY/VIEW_H)*viewWorldH() + camera.y;
+    const tx = Math.floor(worldX / TILE);
+    const ty = Math.floor(worldY / TILE);
+
+    const m = inBounds(tx,ty) ? `${tx}, ${ty}` : "—";
+    if (coordMouseEl && coordMouseEl.textContent !== m) coordMouseEl.textContent = m;
+  }
+
   function renderGold(){
     const g = getGold();
     if (hudGoldTextEl) hudGoldTextEl.textContent = `Gold: ${g}`;
@@ -591,6 +669,17 @@ firemaking:{ name:"Firemaking", xp:0 },
   const resources = [];
   const mobs = [];
   const interactables = [];
+const DEFAULT_MOB_LEVELS = { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:1 };
+
+const MOB_DEFS = {
+  rat: {
+    name: "Rat",
+    hp: 12,
+    // tweak these to get the exact Rat combat level you want
+    levels: { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:2 }
+  },
+};
+
 // ---------- Persistent world seed ----------
 const WORLD_SEED_KEY = "classic_world_seed_v1";
 let worldSeed = 1337; // pick any integer you want as the "default world"
@@ -662,7 +751,25 @@ const DEFAULT_VENDOR_STOCK = [
 
 
   function placeResource(type,x,y){ resources.push({type,x,y,alive:true,respawnAt:0}); }
-  function placeMob(type,x,y){ mobs.push({type,x,y,hp:12,maxHp:12,alive:true,respawnAt:0}); }
+  function placeMob(type,x,y){
+  const def = MOB_DEFS[type] ?? { name: type, hp: 12, levels: {} };
+  const lvls = { ...DEFAULT_MOB_LEVELS, ...(def.levels || {}) };
+  const combatLevel = calcCombatLevelFromLevels(lvls);
+  const maxHp = Math.max(1, def.hp|0 || 12);
+
+  mobs.push({
+    type,
+    name: def.name || type,
+    x, y,
+    hp: maxHp,
+    maxHp,
+    alive: true,
+    respawnAt: 0,
+    levels: lvls,
+    combatLevel
+  });
+}
+
   function placeInteractable(type,x,y){ interactables.push({type,x,y}); }
 
  function seedResources(){
@@ -676,7 +783,7 @@ const DEFAULT_VENDOR_STOCK = [
   const reserved = new Set([
     keyXY(startCastle.x0 + 4, startCastle.y0 + 3),     // bank
     keyXY(startCastle.x0 + 6, startCastle.y0 + 3),     // vendor in castle
-    keyXY(9, 13),                                      // vendor near starter area
+                                          // vendor near starter area
     keyXY(startCastle.x0 + 6, startCastle.y0 + 4),     // player spawn-ish
   ]);
 
@@ -987,6 +1094,38 @@ const DEFAULT_VENDOR_STOCK = [
     if (tooCloseToExistingRat(x,y, 3.0)) continue;
     spawnRat(x,y);
   }
+  // --- Manual tweak: move specific rat ---
+  (function(){
+    const fromX=7,  fromY=27;
+    const toX=13,   toY=32;
+
+    const fromKey = keyXY(fromX, fromY);
+    const toKey   = keyXY(toX, toY);
+
+    const fromRat = mobs.find(m => m.alive && m.type==="rat" && m.x===fromX && m.y===fromY);
+    if (!fromRat) return;
+
+    // If a rat already exists at the destination, remove it so we can place this one there
+    const toIdx = mobs.findIndex(m => m.alive && m.type==="rat" && m.x===toX && m.y===toY);
+    if (toIdx >= 0){
+      mobs.splice(toIdx, 1);
+      used.delete(toKey);
+    }
+
+    // Free the old spot in the "used" set
+    used.delete(fromKey);
+
+    // Only move if the destination is valid under current spawn rules
+    if (tileOkForRat(toX, toY)){
+      fromRat.x = toX;
+      fromRat.y = toY;
+      used.add(toKey);
+    } else {
+      // Put it back (and restore used) if destination isn't valid
+      used.add(fromKey);
+    }
+  })();
+
 }
 
   function seedInteractables(){
@@ -995,7 +1134,6 @@ const DEFAULT_VENDOR_STOCK = [
     const by = startCastle.y0 + 3;
     placeInteractable("bank", bx, by);
 placeInteractable("vendor", bx + 2, by);
-placeInteractable("vendor", 9, 13); // vendor near starter area
 
 
 
@@ -1553,6 +1691,8 @@ vendor: getWindowRect(winVendor)
   const invUseStateEl = document.getElementById("invUseState");
 
   const skillsGrid = document.getElementById("skillsGrid");
+const skillsCombatPillEl = document.getElementById("skillsCombatPill");
+
 
   const eqWeaponIcon = document.getElementById("eqWeaponIcon");
   const eqWeaponName = document.getElementById("eqWeaponName");
@@ -1589,6 +1729,8 @@ vendor: getWindowRect(winVendor)
 
     function renderSkills(){
     skillsGrid.innerHTML="";
+if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCombatLevel()}`;
+
     const order = ["health","accuracy","power","defense","ranged","sorcery","fletching","woodcutting","mining","firemaking", "cooking"];
 
     for (const k of order){
@@ -1817,6 +1959,8 @@ updateVendorIcon();
         const sep=document.createElement("div"); sep.className="sep"; ctxMenu.appendChild(sep); continue;
       }
       const b=document.createElement("button");
+if (opt.className) b.classList.add(opt.className);
+
       b.textContent=opt.label;
       b.onclick=()=>{ closeCtxMenu(); opt.onClick(); };
       ctxMenu.appendChild(b);
@@ -2416,7 +2560,13 @@ initWorldSeed();
 
   // Mobs
   const mobIndex = mobs.findIndex(m => m.alive && m.x===tx && m.y===ty);
-  if (mobIndex>=0) return { kind:"mob", index: mobIndex, label:"Rat" };
+  if (mobIndex>=0){
+  const m = mobs[mobIndex];
+  const name = m?.name ?? "Rat";
+  const lvl  = m?.combatLevel ?? 1;
+  return { kind:"mob", index: mobIndex, label:`${name} (Lvl ${lvl})`, level:lvl };
+}
+
 
   // Resources
   const resIndex = resources.findIndex(r => r.alive && r.x===tx && r.y===ty);
@@ -3335,12 +3485,18 @@ if (it.type === "vendor"){
     const ty=Math.floor(worldY/TILE);
     if (!inBounds(tx,ty)) return;
 
-    ctx.strokeStyle="rgba(94,234,212,.6)";
+    const ent=getEntityAt(tx,ty);
+
+    let stroke="rgba(94,234,212,.6)";
+    if (ent?.kind==="mob"){
+      const cls = ctxLevelClass(getPlayerCombatLevel(), ent.level ?? 1);
+      stroke = levelStrokeForCls(cls);
+    }
+
+    ctx.strokeStyle=stroke;
     ctx.lineWidth=2;
     ctx.strokeRect(tx*TILE+1, ty*TILE+1, TILE-2, TILE-2);
-    ctx.lineWidth=1;
 
-    const ent=getEntityAt(tx,ty);
     let label="";
     if (ent) label=ent.label;
     else{
@@ -3389,7 +3545,7 @@ if (it.type === "vendor"){
 
     let y = py - h + 18;
     for (let i=0;i<lines.length;i++){
-      const text = lines[i];
+            const text = lines[i];
       if (text==="Loot:"){
         ctx.fillStyle="rgba(251,191,36,.95)";
         ctx.fillText(text, px+7, y);
@@ -3397,9 +3553,17 @@ if (it.type === "vendor"){
         ctx.fillStyle="rgba(230,238,247,.92)";
         ctx.fillText(text, px+7, y);
       } else {
-        ctx.fillStyle="rgba(230,238,247,.95)";
+        // Tint the FIRST line (mob name) based on combat level
+        if (i===0 && ent?.kind==="mob"){
+          const cls = ctxLevelClass(getPlayerCombatLevel(), ent.level ?? 1);
+          ctx.fillStyle = levelTextForCls(cls);
+        } else {
+          ctx.fillStyle="rgba(230,238,247,.95)";
+        }
         ctx.fillText(text, px+7, y);
       }
+
+
       y += 16;
     }
 
@@ -3473,7 +3637,10 @@ if (it.type === "vendor"){
 
   // ---------- Input / world-space mouse ----------
   let mouseX=0, mouseY=0;
+let mouseSeen=false;
   canvas.addEventListener("mousemove",(e)=>{
+    mouseSeen = true;
+
     const rect=canvas.getBoundingClientRect();
     const sx=(e.clientX-rect.left)/rect.width;
     const sy=(e.clientY-rect.top)/rect.height;
@@ -3493,9 +3660,15 @@ if (it.type === "vendor"){
 
     const tx=Math.floor(worldX/TILE);
     const ty=Math.floor(worldY/TILE);
-    if (!inBounds(tx,ty)) return;
+        if (!inBounds(tx,ty)) return;
+
+    if (e.shiftKey){
+      chatLine(`<span class="muted">Tile: (${tx}, ${ty})</span>`);
+      return;
+    }
 
     clickToInteract(tx,ty);
+
   });
 
   canvas.addEventListener("contextmenu",(e)=>{
@@ -3522,10 +3695,16 @@ if (it.type === "vendor"){
     };
 
     if (ent?.kind==="mob"){
-      opts.push({label:"Attack Rat", onClick:()=>beginInteraction(ent)});
-      opts.push({label:"Examine Rat", onClick:()=>examineEntity(ent)});
-      opts.push({type:"sep"});
-      opts.push({label:"Walk here", onClick:walkHere});
+  const m = mobs[ent.index];
+  const name = m?.name ?? "Rat";
+  const lvl  = m?.combatLevel ?? 1;
+  const cls  = ctxLevelClass(getPlayerCombatLevel(), lvl);
+
+  opts.push({label:`Attack ${name} (Lvl ${lvl})`, className: cls, onClick:()=>beginInteraction(ent)});
+  opts.push({label:`Examine ${name}`, onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
     } else if (ent?.kind==="res" && ent.label==="Tree"){
       opts.push({label:"Chop Tree", onClick:()=>beginInteraction(ent)});
       opts.push({label:"Examine Tree", onClick:()=>examineEntity(ent)});
@@ -3896,9 +4075,11 @@ if (windowsOpen.vendor && !vendorAvailable){
     // auto-loot ground piles when in range
     attemptAutoLoot();
 
-    updateFX();
+        updateFX();
     updateCamera();
+    updateCoordsHUD();
     renderHPHUD();
+
   }
 
   function render(){

@@ -74,6 +74,37 @@
       width:0%;
       background:linear-gradient(90deg, rgba(251,113,133,.90), rgba(239,68,68,.95));
     }
+    /* ---------- Coords HUD (under HP card) ---------- */
+    .coordCard{
+      pointer-events:none;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(10,16,24,.35);
+      box-shadow:0 14px 34px rgba(0,0,0,.28);
+      backdrop-filter:blur(6px);
+      padding:8px 10px;
+      min-width:160px;
+      font-size:12px;
+      color:rgba(230,238,247,.92);
+    }
+    .coordRow{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      line-height:1.2;
+      margin:3px 0;
+    }
+    .coordKey{
+      width:16px;
+      font-weight:900;
+      color:rgba(169,183,198,.90);
+    }
+    .coordVal{
+      font-weight:900;
+      font-variant-numeric:tabular-nums;
+      letter-spacing:.2px;
+    }
+
 
     /* ---------- Top-right HUD: minimap + toolbar ---------- */
     .hudTopRight{
@@ -638,6 +669,10 @@
       cursor:pointer;
     }
     .ctxmenu button:hover{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.08); }
+.ctxmenu button.lvlGood{ color: var(--accent); }
+.ctxmenu button.lvlWarn{ color: var(--warn); }
+.ctxmenu button.lvlBad{  color: var(--bad); }
+
     .ctxmenu .sep{ height:1px; margin:6px 4px; background:rgba(255,255,255,.10); }
 
     /* ---------- Modals (character create + delete confirm) ---------- */

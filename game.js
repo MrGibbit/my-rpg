@@ -296,6 +296,8 @@ function levelStrokeForCls(cls){
     rat_meat: {
       id:"rat_meat",
       name:"Raw Rat Meat",
+      heal: 2,
+
       stack:true,
       icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
         <rect x="4" y="4" width="8" height="1" fill="rgb(54,24,29)"/>
@@ -317,6 +319,8 @@ function levelStrokeForCls(cls){
     cooked_rat_meat: {
       id:"cooked_rat_meat",
       name:"Cooked Rat Meat",
+      heal: 8,
+
       stack:true,
       icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
         <!-- outline -->
@@ -449,25 +453,74 @@ function levelStrokeForCls(cls){
   function hasItem(id){ return inv.some(s=>s && s.id===id); }
 
   function removeItemsFromInventory(id, qty=1){
-    const item = Items[id];
-    if (!item) return false;
+  const item = Items[id];
+  if (!item) return false;
 
-    qty = Math.max(1, Math.floor(qty||1));
+  qty = Math.max(1, Math.floor(qty || 1));
 
-    // ammo comes from quiver
-    if (item.ammo) return consumeFromQuiver(id, qty);
+  // ammo comes from quiver
+  if (item.ammo) return consumeFromQuiver(id, qty);
 
-    // everything else: remove one-per-slot
+  // stackables: decrement qty across stacks
+  if (item.stack){
     let remaining = qty;
     for (let i=0; i<inv.length && remaining>0; i++){
-      if (inv[i] && inv[i].id === id){
-        inv[i] = null;
-        remaining--;
-      }
+      const s = inv[i];
+      if (!s || s.id !== id) continue;
+
+      const have = Math.max(1, s.qty|0);
+      const take = Math.min(remaining, have);
+      const left = have - take;
+
+      inv[i] = left > 0 ? { id, qty: left } : null;
+      remaining -= take;
     }
     if (remaining !== qty) renderInv();
     return remaining === 0;
   }
+
+  // non-stack items: remove one-per-slot
+  let remaining = qty;
+  for (let i=0; i<inv.length && remaining>0; i++){
+    if (inv[i] && inv[i].id === id){
+      inv[i] = null;
+      remaining--;
+    }
+  }
+  if (remaining !== qty) renderInv();
+  return remaining === 0;
+}
+
+function consumeFoodFromInv(invIndex){
+  const s = inv[invIndex];
+  if (!s) return false;
+
+  const item = Items[s.id];
+  const heal = (item && Number.isFinite(item.heal)) ? (item.heal|0) : 0;
+  if (heal <= 0) return false;
+
+  if (player.hp >= player.maxHp){
+    chatLine(`<span class="muted">You're already at full health.</span>`);
+    return true;
+  }
+
+  // consume 1 (respect stacks)
+  if (item.stack && (s.qty|0) > 1){
+    inv[invIndex] = { id: s.id, qty: (s.qty|0) - 1 };
+  } else {
+    inv[invIndex] = null;
+  }
+  renderInv();
+
+  const before = player.hp;
+  player.hp = clamp(player.hp + heal, 0, player.maxHp);
+  renderHPHUD();
+
+  const gained = player.hp - before;
+  chatLine(`<span class="good">You eat the ${item?.name ?? s.id} and heal <b>${gained}</b> HP.</span>`);
+  return true;
+}
+
 
 
 
@@ -2204,6 +2257,10 @@ if (toolId === "flint_steel" && targetId === "log") {
     const item=Items[s.id];
 
     const opts=[];
+    if (item?.heal > 0){
+      opts.push({ label: "Eat", onClick: ()=> consumeFoodFromInv(idx) });
+    }
+
 
     if (windowsOpen.bank){
       opts.push({ label: "Deposit", onClick: ()=> depositFromInv(idx, null) });
@@ -2257,15 +2314,22 @@ if (toolId === "flint_steel" && targetId === "log") {
   });
 
   invGrid.addEventListener("mousedown", (e) => {
+
     const slot = e.target.closest(".slot");
     if (!slot) return;
     const idx = parseInt(slot.dataset.index,10);
     if (!inv[idx]) return;
+    if (e.button !== 0) return; // only left-click
+
 
     if (windowsOpen.bank){
       depositFromInv(idx, null);
       return;
     }
+    // Left-click food to eat
+    if (consumeFoodFromInv(idx)) return;
+
+
 
     if (activeUseItemId){
       const toolId = activeUseItemId;

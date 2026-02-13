@@ -484,20 +484,6 @@ const COOK_RECIPES = {
     if (item.ammo){
       return addToQuiver(id, qty);
     }
-// stackables: merge into an existing stack, else create a new stack slot
-if (item.stack){
-  const idx = inv.findIndex(s => s && s.id === id);
-  if (idx >= 0){
-    inv[idx] = { id, qty: (((inv[idx].qty|0) || 1) + qty) };
-    renderInv();
-    return qty;
-  }
-  const empty = inv.findIndex(s => !s);
-  if (empty < 0) return 0;
-  inv[empty] = { id, qty };
-  renderInv();
-  return qty;
-}
 
 
     // everything else: one-per-slot (no stacking in inventory)

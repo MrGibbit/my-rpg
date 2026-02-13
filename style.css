@@ -233,12 +233,18 @@
       user-select:none;
     }
     .winHeader .title{
-      font-weight:800;
-      letter-spacing:.2px;
-      display:flex;
-      align-items:center;
-      gap:8px;
-    }
+  font-weight:800;
+  letter-spacing:.2px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+
+  /* allow header content to shrink so the close button never gets pushed off */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
     .winHeader .pill{
       font-size:12px;
       padding:4px 8px;
@@ -249,6 +255,8 @@
       white-space:nowrap;
     }
     .winClose{
+  flex: 0 0 auto;
+
       width:34px;
       height:30px;
       border-radius:12px;
@@ -669,9 +677,6 @@
       cursor:pointer;
     }
     .ctxmenu button:hover{ background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.08); }
-.ctxmenu button.lvlGood{ color: var(--accent); }
-.ctxmenu button.lvlWarn{ color: var(--warn); }
-.ctxmenu button.lvlBad{  color: var(--bad); }
 
     .ctxmenu .sep{ height:1px; margin:6px 4px; background:rgba(255,255,255,.10); }
 

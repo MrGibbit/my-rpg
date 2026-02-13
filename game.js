@@ -669,16 +669,26 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   const resources = [];
   const mobs = [];
   const interactables = [];
-const DEFAULT_MOB_LEVELS = { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:1 };
-
 const MOB_DEFS = {
-  rat: {
-    name: "Rat",
-    hp: 12,
-    // tweak these to get the exact Rat combat level you want
-    levels: { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:2 }
-  },
+rat: {
+  name: "Rat",
+  hp: 8, // was 12
+
+  levels: { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:1 },
+
+  aggroOnSight: false,
+  moveSpeed: 140,
+
+  aggroRange: 4.0,
+  leash: 7.0,
+  attackRange: 1.15,
+  attackSpeedMs: 1600, // slower attacks
+  maxHit: 1            // rats shouldn’t chunk you
+},
+
 };
+
+
 
 // ---------- Persistent world seed ----------
 const WORLD_SEED_KEY = "classic_world_seed_v1";
@@ -748,6 +758,14 @@ const DEFAULT_VENDOR_STOCK = [
 { id: "bow", price: 75, bulk: [1] }
 
 ];
+const DEFAULT_MOB_LEVELS = {
+  accuracy: 1,
+  power: 1,
+  defense: 1,
+  ranged: 1,
+  sorcery: 1,
+  health: 1
+};
 
 
   function placeResource(type,x,y){ resources.push({type,x,y,alive:true,respawnAt:0}); }
@@ -757,17 +775,27 @@ const DEFAULT_VENDOR_STOCK = [
   const combatLevel = calcCombatLevelFromLevels(lvls);
   const maxHp = Math.max(1, def.hp|0 || 12);
 
-  mobs.push({
-    type,
-    name: def.name || type,
-    x, y,
-    hp: maxHp,
-    maxHp,
-    alive: true,
-    respawnAt: 0,
-    levels: lvls,
-    combatLevel
-  });
+ mobs.push({
+  type,
+  name: def.name || type,
+  x, y,
+  homeX: x, homeY: y,
+
+  hp: maxHp,
+  maxHp,
+  alive: true,
+  respawnAt: 0,
+
+  // combat AI state
+  target: null,            // "player" | null
+  aggroUntil: 0,
+  attackCooldownUntil: 0,
+  moveCooldownUntil: 0,
+
+  levels: lvls,
+  combatLevel
+});
+
 }
 
   function placeInteractable(type,x,y){ interactables.push({type,x,y}); }
@@ -1172,6 +1200,8 @@ const BGM_KEY = "classic_bgm_v1";
 
     action: { type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null },
     attackCooldownUntil: 0,
+invulnUntil: 0,
+
     facing: { x: 0, y: 1 },
 
     _sparked: false,
@@ -2521,6 +2551,8 @@ initWorldSeed();
     player.target = null;
     player.action = {type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
     player.attackCooldownUntil = 0;
+player.invulnUntil = now() + 1200;
+
     player._lastRangeMsgAt = 0;
 
     setZoom(0.85);
@@ -2628,6 +2660,7 @@ initWorldSeed();
         born: now(),
         life: 350 + Math.random()*250
       });
+
     }
   }
 
@@ -2660,6 +2693,230 @@ initWorldSeed();
       });
     }
   }
+// ---------- Combat math / rolls ----------
+function lvlOf(skillKey){ return levelFromXP(Skills[skillKey]?.xp ?? 0); }
+function mobLvl(m, key){ return (m?.levels?.[key] ?? 1) | 0; }
+
+// simple “RS-like” feel: accuracy vs defense, clamped so nothing is 100%
+function calcHitChance(att, def){
+  const a = Math.max(1, att|0);
+  const d = Math.max(1, def|0);
+  return clamp(a / (a + d), 0.10, 0.90);
+}
+function rollHit(att, def){ return Math.random() < calcHitChance(att, def); }
+
+function maxHitFromOffense(off){
+  const o = Math.max(1, off|0);
+  return Math.max(1, 1 + Math.floor((o + 2) / 3)); // lvl 1–2 can hit 2
+}
+function rollDamageUpTo(maxHit){
+  const mh = Math.max(1, maxHit|0);
+  return 1 + Math.floor(Math.random() * mh); // 1..maxHit
+}
+
+
+
+function rollPlayerAttack(style, mob){
+  const mobDef = mobLvl(mob, "defense");
+
+  let att = lvlOf("accuracy");
+  let off = lvlOf("power");
+
+  if (style === "ranged"){
+    att = lvlOf("ranged");
+    off = att;
+  } else if (style === "magic"){
+    att = lvlOf("sorcery");
+    off = att;
+  }
+
+  const maxHit = maxHitFromOffense(off);
+  const hit = rollHit(att, mobDef);
+  const dmg = hit ? rollDamageUpTo(maxHit) : 0;
+
+  return { hit, dmg, maxHit };
+}
+
+function rollMobAttack(mob){
+  const def = (MOB_DEFS[mob.type] ?? {});
+  const att = mobLvl(mob, "accuracy");
+  const off = mobLvl(mob, "power");
+  const playerDef = lvlOf("defense");
+
+  const hit = rollHit(att, playerDef);
+  const maxHit = Math.max(1, (def.maxHit ?? maxHitFromOffense(off)));
+  const dmg = hit ? rollDamageUpTo(maxHit) : 0;
+  return { hit, dmg, maxHit };
+}
+
+function mobTileWalkable(nx, ny){
+  if (!isWalkable(nx, ny)) return false;
+  // don’t stand on solid interactables/resources
+  if (resources.some(r => r.alive && r.x===nx && r.y===ny)) return false;
+  if (interactables.some(it => it.x===nx && it.y===ny && it.type!=="fire")) return false;
+  return true;
+}
+
+function mobStepToward(mob, tx, ty){
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+  const curH = Math.abs(tx - mob.x) + Math.abs(ty - mob.y);
+  let best = null;
+  let bestH = curH;
+
+  for (const [dx,dy] of dirs){
+    const nx = mob.x + dx, ny = mob.y + dy;
+    if (!mobTileWalkable(nx, ny)) continue;
+    if (nx===player.x && ny===player.y) continue;
+    if (mobs.some(o => o !== mob && o.alive && o.x===nx && o.y===ny)) continue;
+
+    const h = Math.abs(tx - nx) + Math.abs(ty - ny);
+    if (h < bestH){
+      bestH = h;
+      best = {x:nx, y:ny};
+    }
+  }
+
+  if (best){
+    mob.x = best.x;
+    mob.y = best.y;
+    return true;
+  }
+  return false;
+}
+
+// death penalty + respawn (tweak as you like)
+function handlePlayerDeath(){
+  const dx = player.x, dy = player.y;
+
+  // drop 25% gold at death tile
+  const lost = Math.max(0, Math.floor(getGold() * 0.25));
+  if (lost > 0){
+    wallet.gold = Math.max(0, (wallet.gold|0) - lost);
+    renderGold();
+    addGroundLoot(dx, dy, GOLD_ITEM_ID, lost);
+  }
+
+  chatLine(`<span class="warn">You have died.</span>`);
+
+  player.hp = player.maxHp;
+  player.x = startCastle.x0 + 6;
+  player.y = startCastle.y0 + 4;
+  player.path = [];
+  player.target = null;
+  player.action = {type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
+
+  player.attackCooldownUntil = now() + 800;
+  player.invulnUntil = now() + 2500; // spawn protection
+  syncPlayerPix();
+}
+
+function updateMobsAI(dt){
+  const t = now();
+  if (t < (player.invulnUntil || 0)) return;
+
+  // safe zone around starter castle
+  const playerSafe = inRectMargin(player.x, player.y, startCastle, 1);
+
+  for (let i=0; i<mobs.length; i++){
+    const m = mobs[i];
+    if (!m.alive) continue;
+
+    // backfill older saves
+    if (!Number.isFinite(m.homeX) || !Number.isFinite(m.homeY)){
+      m.homeX = m.x; m.homeY = m.y;
+    }
+    if (!Number.isFinite(m.aggroUntil)) m.aggroUntil = 0;
+    if (!Number.isFinite(m.attackCooldownUntil)) m.attackCooldownUntil = 0;
+    if (!Number.isFinite(m.moveCooldownUntil)) m.moveCooldownUntil = 0;
+
+    // pixel smoothing state
+    if (!Number.isFinite(m.px) || !Number.isFinite(m.py)){
+      const c = tileCenter(m.x, m.y);
+      m.px = c.cx; m.py = c.cy;
+    }
+
+    const def = MOB_DEFS[m.type] ?? {};
+    const aggroRange  = Number.isFinite(def.aggroRange) ? def.aggroRange : 4.0;
+    const leash       = Number.isFinite(def.leash) ? def.leash : 7.0;
+    const attackRange = Number.isFinite(def.attackRange) ? def.attackRange : 1.15;
+    const atkSpeed    = Number.isFinite(def.attackSpeedMs) ? def.attackSpeedMs : 1300;
+
+    // key change: passive mobs won’t aggro unless hit
+    const aggroOnSight = (def.aggroOnSight !== false);
+
+    // smooth motion toward current tile center
+    const moveSpeed = Number.isFinite(def.moveSpeed) ? def.moveSpeed : 140; // px/sec
+    const c2 = tileCenter(m.x, m.y);
+    const mcx = c2.cx, mcy = c2.cy;
+    const dPix = dist(m.px, m.py, mcx, mcy);
+    if (dPix > 0.5){
+      const step = moveSpeed * dt;
+      m.px += ((mcx - m.px) / dPix) * Math.min(step, dPix);
+      m.py += ((mcy - m.py) / dPix) * Math.min(step, dPix);
+    } else {
+      m.px = mcx; m.py = mcy;
+    }
+
+    const dToPlayer      = tilesBetweenTiles(m.x, m.y, player.x, player.y);
+    const dFromHome      = tilesBetweenTiles(m.x, m.y, m.homeX, m.homeY);
+    const dPlayerFromHome= tilesBetweenTiles(player.x, player.y, m.homeX, m.homeY);
+
+    const engaged = (m.target === "player" && t < m.aggroUntil);
+
+    // Acquire aggro (only if aggroOnSight === true)
+    if (!engaged){
+      if (aggroOnSight && !playerSafe && dToPlayer <= aggroRange){
+        m.target = "player";
+        m.aggroUntil = t + 12000;
+      } else if (dFromHome > 0.05){
+        // drift home if displaced
+        if (t >= m.moveCooldownUntil){
+          m.moveCooldownUntil = t + 420;
+          mobStepToward(m, m.homeX, m.homeY);
+        }
+      }
+           continue;
+    }
+
+    // leash / safe-zone break
+    if (playerSafe || dFromHome > leash || dPlayerFromHome > leash){
+      m.target = null;
+      m.aggroUntil = 0;
+      continue;
+    }
+
+    // keep aggro alive while nearby
+    if (dToPlayer <= aggroRange + 1.0) m.aggroUntil = t + 12000;
+
+    // Move into range
+    if (dToPlayer > attackRange){
+      if (t >= m.moveCooldownUntil){
+        m.moveCooldownUntil = t + 420;
+        mobStepToward(m, player.x, player.y);
+      }
+      continue;
+    }
+
+    // Attack
+    if (t < m.attackCooldownUntil) continue;
+    m.attackCooldownUntil = t + atkSpeed;
+
+    const roll = rollMobAttack(m);
+    if (roll.dmg <= 0){
+      chatLine(`<span class="muted">${m.name} misses you.</span>`);
+      continue;
+    }
+
+    player.hp = clamp(player.hp - roll.dmg, 0, player.maxHp);
+    chatLine(`<span class="warn">${m.name} hits you for <b>${roll.dmg}</b>.</span>`);
+
+    // auto-retaliate if you aren't already targeting something
+    if (!player.target){
+      player.target = { kind:"mob", index: i };
+    }
+  }
+}
+
 
   function updateFX(){
     const t=now();
@@ -2922,11 +3179,17 @@ function ensureWalkIntoRangeAndAct(){
     const m=mobs[t.index];
     if (!m || !m.alive) return stopAction("That creature is gone.");
 
-    const style = getCombatStyle();
-    const maxRangeTiles = (style === "melee") ? 1.15 : 5.0;
-    const dTiles = tilesFromPlayerToTile(m.x, m.y);
+    const tNow = now();
+const style = getCombatStyle();
+const maxRangeTiles = (style === "melee") ? 1.15 : 5.0;
+const dTiles = tilesFromPlayerToTile(m.x, m.y);
+
 
     if (dTiles > maxRangeTiles){
+  // Prevent “freeze” from pathfinding spam when unreachable
+  if (tNow < (player._pathTryUntil || 0)) return;
+  player._pathTryUntil = tNow + 200; // ms throttle
+
       if (style !== "melee"){
         const tNow = now();
         if (!player._lastRangeMsgAt || (tNow - player._lastRangeMsgAt) > 900){
@@ -2944,14 +3207,15 @@ function ensureWalkIntoRangeAndAct(){
         .filter(p=>isWalkable(p.x,p.y));
       if (!adj.length) return stopAction("No path to target.");
       adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      setPathTo(adj[0].x, adj[0].y);
-      return;
+      if (!setPathTo(adj[0].x, adj[0].y)) return stopAction("No path to target.");
+return;
+
     }
 
     player.facing.x = clamp(m.x - player.x, -1, 1);
     player.facing.y = clamp(m.y - player.y, -1, 1);
 
-    const tNow=now();
+    
     if (tNow < player.attackCooldownUntil) return;
     player.attackCooldownUntil = tNow + 900;
 
@@ -2962,31 +3226,49 @@ function ensureWalkIntoRangeAndAct(){
       }
     }
 
-    const dmg = 1 + Math.floor(Math.random()*4);
-    m.hp -= dmg;
+// engage mob so it can retaliate (safe even if you haven’t added AI yet)
+m.target = "player";
+m.aggroUntil = tNow + 15000;
 
-    if (style === "melee") spawnCombatFX("slash", m.x, m.y);
-    if (style === "ranged") spawnCombatFX("arrow", m.x, m.y);
-    if (style === "magic") spawnCombatFX("bolt", m.x, m.y);
+const roll = rollPlayerAttack(style, m);
 
-    addXP("health", dmg);
+if (style === "melee") spawnCombatFX("slash", m.x, m.y);
+if (style === "ranged") spawnCombatFX("arrow", m.x, m.y);
+if (style === "magic") spawnCombatFX("bolt", m.x, m.y);
 
-    if (style === "melee"){
-      addXP(meleeTraining, dmg);
+const mobName = (m.name || "creature").toLowerCase();
+
+if (!roll.hit || roll.dmg <= 0){
+  if (style === "magic"){
+    chatLine(`Your <b>Air Bolt</b> splashes harmlessly on the ${mobName}.`);
+  } else if (style === "ranged"){
+    chatLine(`You shoot and miss the ${mobName}.`);
+  } else {
+    chatLine(`You swing and miss the ${mobName}.`);
+  }
+  return;
+}
+
+const dmg = roll.dmg;
+m.hp = Math.max(0, m.hp - dmg);
+
+addXP("health", dmg);
+
+if (style === "melee"){
+  addXP(meleeTraining, dmg);
 } else if (style === "ranged"){
-      addXP("ranged", dmg);
-    } else {
+  addXP("ranged", dmg);
+} else {
+  addXP("sorcery", dmg);
+}
 
-      addXP("sorcery", dmg);
-    }
-
-    if (style === "magic"){
-      chatLine(`You cast <b>Air Bolt</b> at the rat for <b>${dmg}</b>.`);
-    } else if (style === "ranged"){
-      chatLine(`You shoot the rat for <b>${dmg}</b>.`);
-    } else {
-      chatLine(`You hit the rat for <b>${dmg}</b>.`);
-    }
+if (style === "magic"){
+  chatLine(`You cast <b>Air Bolt</b> at the ${mobName} for <b>${dmg}</b>.`);
+} else if (style === "ranged"){
+  chatLine(`You shoot the ${mobName} for <b>${dmg}</b>.`);
+} else {
+  chatLine(`You hit the ${mobName} for <b>${dmg}</b>.`);
+}
 
     if (m.hp <= 0){
       m.alive=false; m.respawnAt=now()+12000; m.hp=0;
@@ -3248,8 +3530,11 @@ if (item.ammo){
   }
 
   function drawRat(m){
-    const cx=m.x*TILE+TILE/2;
-    const cy=m.y*TILE+TILE/2;
+     const cx = (Number.isFinite(m.px) ? m.px : (m.x*TILE+TILE/2));
+    const cy = (Number.isFinite(m.py) ? m.py : (m.y*TILE+TILE/2));
+    const px = cx - TILE/2;
+    const py = cy - TILE/2;
+
 
     ctx.strokeStyle="rgba(250, 204, 211, .9)";
     ctx.lineWidth=3;
@@ -3285,10 +3570,10 @@ if (item.ammo){
     ctx.fill();
 
     ctx.fillStyle="rgba(0,0,0,.5)";
-    ctx.fillRect(m.x*TILE+6, m.y*TILE+4, TILE-12, 5);
+     ctx.fillRect(px+6, py+4, TILE-12, 5);
     ctx.fillStyle="#fb7185";
     const w = clamp((m.hp/m.maxHp)*(TILE-12), 0, TILE-12);
-    ctx.fillRect(m.x*TILE+6, m.y*TILE+4, w, 5);
+    ctx.fillRect(px+6, py+4, w, 5);
   }
 
   function drawMobs(){
@@ -3860,22 +4145,144 @@ let mouseSeen=false;
 
   // ---------- Saving / Loading (with migration) ----------
   function serialize(){
-    return JSON.stringify({
-      player:{ x:player.x, y:player.y, name:player.name, class: player.class, color:player.color, hp:player.hp, maxHp:player.maxHp },
-      skills:Object.fromEntries(Object.entries(Skills).map(([k,v])=>[k,v.xp])),
-      inv,
-      bank,
-      zoom,
-      equipment: { ...equipment },
-      quiver: { ...quiver },
-      wallet: { ...wallet },
+  const t = now();
 
-      groundLoot: Array.from(groundLoot.entries()).map(([k,p])=>[k, Array.from(p.entries())])
-    });
-  }
+  return JSON.stringify({
+    v: 2,
+
+    player:{ x:player.x, y:player.y, name:player.name, class: player.class, color:player.color, hp:player.hp, maxHp:player.maxHp },
+    skills:Object.fromEntries(Object.entries(Skills).map(([k,v])=>[k,v.xp])),
+    inv,
+    bank,
+    zoom,
+    equipment: { ...equipment },
+    quiver: { ...quiver },
+    wallet: { ...wallet },
+
+    groundLoot: Array.from(groundLoot.entries()).map(([k,p])=>[k, Array.from(p.entries())]),
+
+    world: {
+      resources: resources.map(r => ({
+        type: r.type,
+        x: r.x, y: r.y,
+        alive: !!r.alive,
+        respawnIn: (!r.alive && r.respawnAt) ? Math.max(0, Math.floor(r.respawnAt - t)) : 0
+      })),
+      mobs: mobs.map(m => ({
+        type: m.type,
+        name: m.name,
+        x: m.x, y: m.y,
+        homeX: (m.homeX ?? m.x),
+        homeY: (m.homeY ?? m.y),
+        hp: (m.hp|0),
+        maxHp: (m.maxHp|0),
+        alive: !!m.alive,
+        respawnIn: (!m.alive && m.respawnAt) ? Math.max(0, Math.floor(m.respawnAt - t)) : 0,
+        levels: m.levels ?? null
+      })),
+      fires: interactables
+        .filter(it => it.type === "fire")
+        .map(it => ({
+          x: it.x, y: it.y,
+          expiresIn: it.expiresAt ? Math.max(0, Math.floor(it.expiresAt - t)) : 0
+        }))
+    }
+  });
+}
+
 
   function deserialize(str){
     const data=JSON.parse(str);
+    // --- World restore (prevents save/load dupes) ---
+    function rebuildWorldFromSave(){
+      const t0 = now();
+
+      // wipe current world so we don't keep fires/mobs from the "future"
+      resources.length = 0;
+      mobs.length = 0;
+      interactables.length = 0;
+
+      // resources
+      if (Array.isArray(data?.world?.resources)){
+        for (const r of data.world.resources){
+          if (!r) continue;
+          resources.push({
+            type: r.type,
+            x: r.x|0,
+            y: r.y|0,
+            alive: !!r.alive,
+            respawnAt: (!r.alive && (r.respawnIn|0) > 0) ? (t0 + (r.respawnIn|0)) : 0
+          });
+        }
+      } else {
+        seedResources();
+      }
+
+      // mobs
+      if (Array.isArray(data?.world?.mobs)){
+        for (const mm of data.world.mobs){
+          if (!mm) continue;
+
+          const def = MOB_DEFS[mm.type] ?? { name: mm.type, hp: 12, levels: {} };
+          const lvls = { ...DEFAULT_MOB_LEVELS, ...(mm.levels || def.levels || {}) };
+          const combatLevel = calcCombatLevelFromLevels(lvls);
+
+          const x = mm.x|0, y = mm.y|0;
+          const maxHp = Math.max(1, (mm.maxHp|0) || (def.hp|0) || 12);
+          const hp = clamp((mm.hp|0) || maxHp, 0, maxHp);
+
+          const mob = {
+            type: mm.type,
+            name: mm.name || def.name || mm.type,
+            x, y,
+            homeX: (mm.homeX ?? x)|0,
+            homeY: (mm.homeY ?? y)|0,
+
+            hp,
+            maxHp,
+            alive: !!mm.alive,
+            respawnAt: (!mm.alive && (mm.respawnIn|0) > 0) ? (t0 + (mm.respawnIn|0)) : 0,
+
+            // reset combat AI state on load
+            target: null,
+            aggroUntil: 0,
+            attackCooldownUntil: 0,
+            moveCooldownUntil: 0,
+
+            levels: lvls,
+            combatLevel
+          };
+
+          // smooth movement state
+          const c = tileCenter(x, y);
+          mob.px = c.cx; mob.py = c.cy;
+
+          mobs.push(mob);
+        }
+      } else {
+        seedMobs();
+      }
+
+      // always restore static interactables (bank/vendor)
+      seedInteractables();
+
+      // restore saved fires
+      if (Array.isArray(data?.world?.fires)){
+        for (const f of data.world.fires){
+          if (!f) continue;
+          const born = t0;
+          const expiresIn = Math.max(0, f.expiresIn|0);
+          interactables.push({
+            type: "fire",
+            x: f.x|0,
+            y: f.y|0,
+            createdAt: born,
+            expiresAt: expiresIn ? (t0 + expiresIn) : (t0 + 60000)
+          });
+        }
+      }
+    }
+
 
     if (data?.player){
       player.x=data.player.x|0; player.y=data.player.y|0;
@@ -3892,6 +4299,8 @@ let mouseSeen=false;
       player.path=[];
       player.target=null;
       player.action={type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
+    rebuildWorldFromSave();
+
     }
 
     if (data?.skills){
@@ -4189,11 +4598,15 @@ if (windowsOpen.vendor && !vendorAvailable){
       syncPlayerPix();
       if (player.target) ensureWalkIntoRangeAndAct();
     }
+// mobs: aggro + move + attack
+updateMobsAI(dt);
+if (player.hp <= 0) handlePlayerDeath();
+
 
     // auto-loot ground piles when in range
     attemptAutoLoot();
 
-        updateFX();
+        updateFX(); 
     updateCamera();
     updateCoordsHUD();
     renderHPHUD();

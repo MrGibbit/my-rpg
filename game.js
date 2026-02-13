@@ -99,6 +99,12 @@
     if (!inBounds(x,y)) return false;
     return map[y][x]===0 || map[y][x]===3 || map[y][x]===5;
   }
+  // "Indoors" tiles (currently: stone floor inside castles/buildings)
+  function isIndoors(x,y){
+    if (!inBounds(x,y)) return false;
+    return map[y][x] === 3; // stone floor
+  }
+
 
   // ---------- A* pathfinding ----------
   function astar(sx, sy, gx, gy) {
@@ -2280,6 +2286,12 @@ if (toolId === "flint_steel" && targetId === "log") {
     chatLine(`<span class="warn">You're busy.</span>`);
     return true;
   }
+  // Don't allow lighting fires indoors
+  if (isIndoors(player.x, player.y)){
+    chatLine(`<span class="warn">You can't light a fire indoors.</span>`);
+    return true;
+  }
+
 
   // Must be standing on an empty tile (no bank/vendor/mob/resource/fire)
   if (getEntityAt(player.x, player.y)){
@@ -2297,6 +2309,12 @@ if (toolId === "flint_steel" && targetId === "log") {
       chatLine(`<span class="warn">That space is occupied.</span>`);
       return;
     }
+    if (isIndoors(player.x, player.y)){
+      chatLine(`<span class="warn">You can't light a fire indoors.</span>`);
+      return;
+    }
+
+
 
     // consume 1 log
     if (!removeItemsFromInventory("log", 1)) {

@@ -1306,6 +1306,12 @@ placeInteractable("vendor", bx + 2, by);
 // Fishing spots on the river near the starter castle
 placeInteractable("fish", 6, RIVER_Y);
 placeInteractable("fish", 10, RIVER_Y + 1);
+// Smithing props in the south keep (bottom-right building)
+const sx = southKeep.x0 + 4;
+const sy = southKeep.y0 + 3;
+placeInteractable("furnace", sx, sy);
+placeInteractable("anvil", sx + 2, sy);
+
 
 
 
@@ -2768,6 +2774,9 @@ player.invulnUntil = now() + 1200;
     if (it.type === "bank")   return { kind:"bank", index: idx, label:"Bank Chest", x:it.x, y:it.y };
     if (it.type === "vendor") return { kind:"vendor", index: idx, label:"Vendor", x:it.x, y:it.y };
     if (it.type === "fish") return { kind:"fish", index: idx, label:"Fishing Spot", x:it.x, y:it.y };
+if (it.type === "furnace") return { kind:"furnace", index: idx, label:"Furnace", x:it.x, y:it.y };
+if (it.type === "anvil")   return { kind:"anvil", index: idx, label:"Anvil", x:it.x, y:it.y };
+
 
   }
 
@@ -2800,6 +2809,9 @@ player.invulnUntil = now() + 1200;
     if (ent.kind==="vendor") chatLine(`<span class="muted">A traveling vendor. Buys and sells goods.</span>`);
     if (ent.kind==="fire") chatLine(`<span class="muted">A warm campfire. Great for cooking.</span>`);
 if (ent.kind==="fish") chatLine(`<span class="muted">A bubbling fishing spot in the river.</span>`);
+if (ent.kind==="furnace") chatLine(`<span class="muted">A sturdy furnace. Smithing is coming soon.</span>`);
+if (ent.kind==="anvil")   chatLine(`<span class="muted">A heavy anvil. You'll use it to forge gear later.</span>`);
+
 
 
     
@@ -3255,7 +3267,59 @@ function ensureWalkIntoRangeAndAct(){
     stopAction();
     return;
   }
-  // ---------- CAMPFIRE ----------
+  
+
+// ---------- FURNACE ----------
+if (t.kind === "furnace"){
+  const fz = interactables[t.index];
+  if (!fz) return stopAction();
+
+  if (!inRangeOfTile(fz.x, fz.y, 1.1)){
+    const adj = [[1,0],[-1,0],[0,1],[0,-1]]
+      .map(([dx,dy])=>({x:fz.x+dx,y:fz.y+dy}))
+      .filter(p=>isWalkable(p.x,p.y));
+    if (!adj.length) return stopAction("No path to furnace.");
+    adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
+    setPathTo(adj[0].x, adj[0].y);
+    return;
+  }
+
+  player.facing.x = clamp(fz.x - player.x, -1, 1);
+  player.facing.y = clamp(fz.y - player.y, -1, 1);
+
+  if (player.action.type !== "idle") return;
+
+  chatLine(`<span class="muted">The furnace is cold. (Smithing coming soon.)</span>`);
+  stopAction();
+  return;
+}
+
+// ---------- ANVIL ----------
+if (t.kind === "anvil"){
+  const av = interactables[t.index];
+  if (!av) return stopAction();
+
+  if (!inRangeOfTile(av.x, av.y, 1.1)){
+    const adj = [[1,0],[-1,0],[0,1],[0,-1]]
+      .map(([dx,dy])=>({x:av.x+dx,y:av.y+dy}))
+      .filter(p=>isWalkable(p.x,p.y));
+    if (!adj.length) return stopAction("No path to anvil.");
+    adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
+    setPathTo(adj[0].x, adj[0].y);
+    return;
+  }
+
+  player.facing.x = clamp(av.x - player.x, -1, 1);
+  player.facing.y = clamp(av.y - player.y, -1, 1);
+
+  if (player.action.type !== "idle") return;
+
+  chatLine(`<span class="muted">You inspect the anvil. (Smithing coming soon.)</span>`);
+  stopAction();
+  return;
+}
+
+// ---------- CAMPFIRE ----------
   if (t.kind === "fire"){
     const f = interactables[t.index];
     if (!f) return stopAction();
@@ -3871,11 +3935,77 @@ if (item.ammo){
     ctx.fillRect(px+15, py+16, 2, 6);
   }
 
-  function drawInteractables(){
+ function drawFurnace(x,y){
+  const px=x*TILE, py=y*TILE;
+  const t = now();
+  const flick = 0.75 + 0.25*Math.sin(t*0.012 + x*3.1 + y*2.7);
+
+  // stone body
+  ctx.fillStyle="#1f2937";
+  ctx.fillRect(px+5, py+10, 22, 18);
+  ctx.fillStyle="rgba(255,255,255,.06)";
+  ctx.fillRect(px+6, py+11, 20, 2);
+
+  // top cap
+  ctx.fillStyle="#111827";
+  ctx.fillRect(px+7, py+7, 18, 4);
+
+  // chimney
+  ctx.fillStyle="#0b1220";
+  ctx.fillRect(px+11, py+4, 10, 4);
+
+  // opening
+  ctx.fillStyle="#0b0f14";
+  ctx.fillRect(px+11, py+18, 10, 8);
+
+  // glow (animated)
+  ctx.fillStyle=`rgba(249,115,22,${0.65*flick})`;
+  ctx.fillRect(px+12, py+19, 8, 6);
+  ctx.fillStyle=`rgba(251,191,36,${0.55*flick})`;
+  ctx.fillRect(px+13, py+20, 6, 4);
+
+  // little sparks
+  ctx.fillStyle=`rgba(253,230,138,${0.35*flick})`;
+  ctx.fillRect(px+15, py+15, 1, 1);
+  ctx.fillRect(px+18, py+14, 1, 1);
+}
+
+function drawAnvil(x,y){
+  const px=x*TILE, py=y*TILE;
+
+  // stump/base
+  ctx.fillStyle="#7c4a24";
+  ctx.fillRect(px+12, py+18, 8, 10);
+  ctx.fillStyle="rgba(0,0,0,.18)";
+  ctx.fillRect(px+12, py+18, 2, 10);
+
+  // anvil body
+  ctx.fillStyle="#9ca3af";
+  ctx.fillRect(px+9, py+14, 14, 4);
+  ctx.fillRect(px+11, py+11, 10, 4);
+
+  // horn
+  ctx.fillRect(px+22, py+13, 4, 3);
+  ctx.fillStyle="#6b7280";
+  ctx.fillRect(px+23, py+12, 3, 2);
+
+  // highlight
+  ctx.fillStyle="rgba(255,255,255,.10)";
+  ctx.fillRect(px+11, py+12, 9, 1);
+
+  // shadow
+  ctx.fillStyle="rgba(0,0,0,.22)";
+  ctx.fillRect(px+10, py+18, 12, 1);
+}
+
+ function drawInteractables(){
     const {startX,startY,endX,endY}=visibleTileBounds();
     for (const it of interactables){
       if (it.x<startX-1 || it.x>endX+1 || it.y<startY-1 || it.y>endY+1) continue;
       if (it.type==="bank") drawBankChest(it.x,it.y);
+if (it.type==="furnace") drawFurnace(it.x,it.y);
+if (it.type==="anvil")   drawAnvil(it.x,it.y);
+
 
       if (it.type==="fire"){
   const cx = it.x * TILE + TILE/2;
@@ -4447,10 +4577,21 @@ let mouseSeen=false;
   opts.push({type:"sep"});
   opts.push({label:"Walk here", onClick:walkHere});
 
+} else if (ent?.kind==="furnace"){
+  opts.push({label:"Use Furnace", onClick:()=>beginInteraction(ent)});
+  opts.push({label:"Examine Furnace", onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
+} else if (ent?.kind==="anvil"){
+  opts.push({label:"Use Anvil", onClick:()=>beginInteraction(ent)});
+  opts.push({label:"Examine Anvil", onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
 } else {
 
       if (isWalkable(tx,ty)) opts.push({label:"Walk here", onClick:walkHere});
-      else opts.push({label:"Nothing interesting", onClick:()=>chatLine(`<span class="muted">You can't walk there.</span>`)});
     }
     openCtxMenu(e.clientX,e.clientY,opts);
   });

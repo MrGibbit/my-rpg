@@ -607,6 +607,24 @@ const COOK_RECIPES = {
   function getQuiverCount(){
     return (quiver.wooden_arrow | 0);
   }
+  function moveAmmoFromQuiverToInventory(id, qty=null){
+    if (id === "bronze_arrow") id = "wooden_arrow";
+    const item = Items[id];
+    if (!item || !item.ammo) return 0;
+
+    const have = quiver[id] | 0;
+    if (have <= 0) return 0;
+
+    const want = (qty==null) ? have : Math.min(Math.max(1, qty|0), have);
+    const added = addToInventory(id, want, { forceInventory: true });
+    if (added <= 0) return 0;
+
+    // Force ammo into inventory so players can bank/swap arrow types manually.
+    quiver[id] = Math.max(0, have - added);
+
+    renderQuiver();
+    return added;
+  }
 
 
 
@@ -677,13 +695,14 @@ function pruneExpiredGroundLoot(){
     }
   }
 }
-    // ---------- Inventory behavior ----------
-  // Inventory: one-per-slot (no stacking). Ammo routes to quiver.
-  function addToInventory(id, qty=1){
+  // ---------- Inventory behavior ----------
+  // Inventory: one-per-slot by default. Ammo routes to quiver unless forced into inventory.
+  function addToInventory(id, qty=1, opts={}){
     const item = Items[id];
     if (!item) return 0;
 
     qty = Math.max(1, qty|0);
+    const forceInventory = !!opts.forceInventory;
     // gold never takes inventory slots
     if (id === GOLD_ITEM_ID){
       addGold(qty);
@@ -691,8 +710,23 @@ function pruneExpiredGroundLoot(){
     }
 
     // ammo: route to quiver (no inventory slots)
-    if (item.ammo){
+    if (item.ammo && !forceInventory){
       return addToQuiver(id, qty);
+    }
+
+    // RuneScape-style ammo stack in inventory when explicitly moved from quiver.
+    if (item.stack && forceInventory){
+      const si = inv.findIndex(s => s && s.id === id);
+      if (si >= 0){
+        inv[si].qty = Math.max(1, inv[si].qty|0) + qty;
+        renderInv();
+        return qty;
+      }
+      const empty = inv.findIndex(s => !s);
+      if (empty < 0) return 0;
+      inv[empty] = { id, qty };
+      renderInv();
+      return qty;
     }
 
 
@@ -716,12 +750,10 @@ function pruneExpiredGroundLoot(){
 
   qty = Math.max(1, Math.floor(qty || 1));
 
-  // ammo comes from quiver
-  if (item.ammo) return consumeFromQuiver(id, qty);
-
-  // stackables: decrement qty across stacks
+  // Always remove from inventory first (including ammo moved from quiver).
+  // If ammo is still needed after that, fall back to quiver.
+  let remaining = qty;
   if (item.stack){
-    let remaining = qty;
     for (let i=0; i<inv.length && remaining>0; i++){
       const s = inv[i];
       if (!s || s.id !== id) continue;
@@ -733,20 +765,21 @@ function pruneExpiredGroundLoot(){
       inv[i] = left > 0 ? { id, qty: left } : null;
       remaining -= take;
     }
-    if (remaining !== qty) renderInv();
-    return remaining === 0;
-  }
-
-  // non-stack items: remove one-per-slot
-  let remaining = qty;
-  for (let i=0; i<inv.length && remaining>0; i++){
-    if (inv[i] && inv[i].id === id){
-      inv[i] = null;
-      remaining--;
+  } else {
+    // non-stack items: remove one-per-slot
+    for (let i=0; i<inv.length && remaining>0; i++){
+      if (inv[i] && inv[i].id === id){
+        inv[i] = null;
+        remaining--;
+      }
     }
   }
+
   if (remaining !== qty) renderInv();
-  return remaining === 0;
+
+  if (remaining <= 0) return true;
+  if (item.ammo) return consumeFromQuiver(id, remaining);
+  return false;
 }
 
 function consumeFoodFromInv(invIndex){
@@ -816,17 +849,38 @@ function consumeFoodFromInv(invIndex){
     return it.equipSlot || null;
   }
 
+  function equipAmmoFromInv(invIndex, qty=null){
+    const s = inv[invIndex];
+    if (!s) return;
+    const item = Items[s.id];
+    if (!item?.ammo){
+      chatLine(`<span class="muted">You can't equip that as ammo.</span>`);
+      return;
+    }
+
+    const have = Math.max(1, s.qty|0);
+    const move = (qty==null) ? have : Math.min(Math.max(1, qty|0), have);
+    if (move <= 0) return;
+
+    const left = have - move;
+    inv[invIndex] = left > 0 ? { id: s.id, qty: left } : null;
+    addToQuiver(s.id, move);
+    renderInv();
+    chatLine(`<span class="good">You equip ${move}x ${item.name} to your quiver.</span>`);
+  }
+
   function equipFromInv(invIndex){
     const s = inv[invIndex];
     if (!s) return;
     const id = s.id;
+    if (Items[id]?.ammo){
+      equipAmmoFromInv(invIndex);
+      return;
+    }
+
     const slot = canEquip(id);
     if (!slot){
       chatLine(`<span class="muted">You can't equip that.</span>`);
-      return;
-    }
-    if (Items[id]?.ammo){
-      chatLine(`<span class="muted">You can't equip ammo.</span>`);
       return;
     }
 
@@ -938,7 +992,8 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   function renderQuiver(){
     document.getElementById("invQuiverPill").textContent = `Quiver: ${getQuiverCount()}`;
     document.getElementById("eqQuiverPill").textContent = `Quiver: ${getQuiverCount()}`;
-        renderGold();
+    renderQuiverSlot();
+    renderGold();
     renderHPHUD();
 
   }
@@ -987,6 +1042,18 @@ rat: {
   attackRange: 1.15,
   attackSpeedMs: 1600, // slower attacks
   maxHit: 1            // rats shouldn’t chunk you
+},
+goblin: {
+  name: "Goblin",
+  hp: 14,
+  levels: { accuracy:4, power:4, defense:2, ranged:1, sorcery:1, health:2 },
+  aggroOnSight: false,
+  moveSpeed: 145,
+  aggroRange: 4.4,
+  leash: 8.0,
+  attackRange: 1.15,
+  attackSpeedMs: 1500,
+  maxHit: 2
 },
 
 };
@@ -1372,6 +1439,10 @@ const DEFAULT_MOB_LEVELS = {
     used.add(keyXY(x,y));
     placeMob("rat", x, y);
   }
+  function spawnGoblin(x,y){
+    used.add(keyXY(x,y));
+    placeMob("goblin", x, y);
+  }
 
   function findNestTile(kind, zoneFn=null){
     for (let a=0; a<5000; a++){
@@ -1397,6 +1468,7 @@ const DEFAULT_MOB_LEVELS = {
     const spread = Number.isFinite(opts.spread) ? Math.max(1, opts.spread|0) : 3;
     const minDistBase = Number.isFinite(opts.minDist) ? Math.max(0.8, opts.minDist) : 2.1;
     const zoneFn = (typeof opts.zoneFn === "function") ? opts.zoneFn : null;
+    const spawnFn = (typeof opts.spawnFn === "function") ? opts.spawnFn : spawnRat;
 
     let placed = 0;
     for (let a=0; a<count*90 && placed<count; a++){
@@ -1409,7 +1481,7 @@ const DEFAULT_MOB_LEVELS = {
       const desiredDist = minDistBase + rng()*0.65;
       if (tooCloseToExistingRat(x,y, desiredDist)) continue;
 
-      spawnRat(x,y);
+      spawnFn(x,y);
       placed++;
     }
     return placed;
@@ -1473,6 +1545,37 @@ const DEFAULT_MOB_LEVELS = {
     if (!southOfRiver(x,y)) continue;
     if (tooCloseToExistingRat(x,y, 2.4 + rng()*0.6)) continue;
     spawnRat(x,y);
+  }
+
+  // Mid-tier mobs: a goblin pack north of the river near (37,13).
+  const GOBLIN_TARGET = 4;
+  const goblinAnchor = { x: 37, y: 13 };
+  const inGoblinZone = (x,y) => (
+    y <= (RIVER_Y - 5) &&
+    Math.abs(x - goblinAnchor.x) <= 7 &&
+    Math.abs(y - goblinAnchor.y) <= 5
+  );
+  const goblinCount = () => mobs.reduce((n,m) => n + ((m.alive && m.type === "goblin") ? 1 : 0), 0);
+
+  const goblinSeed =
+    findClusterSeed(goblinAnchor.x, goblinAnchor.y, 4, inGoblinZone) ||
+    findClusterSeed(goblinAnchor.x, goblinAnchor.y, 8, inGoblinZone);
+  if (goblinSeed){
+    spawnAround(goblinSeed.x, goblinSeed.y, GOBLIN_TARGET, {
+      spread: 4,
+      minDist: 2.2,
+      zoneFn: inGoblinZone,
+      spawnFn: spawnGoblin
+    });
+  }
+
+  for (let a=0; a<3200 && goblinCount() < GOBLIN_TARGET; a++){
+    const x = goblinAnchor.x + randInt(rng, -7, 7);
+    const y = goblinAnchor.y + randInt(rng, -5, 5);
+    if (!inGoblinZone(x,y)) continue;
+    if (!tileOkForRat(x,y)) continue;
+    if (tooCloseToExistingRat(x,y, 2.2 + rng()*0.6)) continue;
+    spawnGoblin(x,y);
   }
 
 }
@@ -1691,13 +1794,15 @@ function renderVendorUI(){
     return;
   }
 
-  // SELL tab: show unique sellable items currently in inventory (one-per-slot items can be sold per click)
+  // SELL tab: show unique sellable items currently in inventory.
   const seen = new Map(); // id -> count
   for (const s of inv){
     if (!s) continue;
     const id = s.id;
-    if (!Items[id]) continue;
-    seen.set(id, (seen.get(id)|0) + 1);
+    const item = Items[id];
+    if (!item) continue;
+    const qty = item.stack ? Math.max(1, s.qty|0) : 1;
+    seen.set(id, (seen.get(id)|0) + qty);
   }
 
   for (const [id, count] of seen.entries()){
@@ -2015,6 +2120,9 @@ const skillsCombatPillEl = document.getElementById("skillsCombatPill");
   const eqWeaponName = document.getElementById("eqWeaponName");
   const eqOffhandIcon = document.getElementById("eqOffhandIcon");
   const eqOffhandName = document.getElementById("eqOffhandName");
+  const eqQuiverIcon = document.getElementById("eqQuiverIcon");
+  const eqQuiverName = document.getElementById("eqQuiverName");
+  const eqQuiverQty = document.getElementById("eqQuiverQty");
 
   const bankGrid = document.getElementById("bankGrid");
   const bankCountEl = document.getElementById("bankCount");
@@ -2073,6 +2181,23 @@ if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCom
   }
 
 
+  function renderQuiverSlot(){
+    if (!eqQuiverIcon || !eqQuiverName || !eqQuiverQty) return;
+
+    const arrows = getQuiverCount();
+    if (arrows > 0){
+      eqQuiverIcon.innerHTML = Items.wooden_arrow?.icon ?? UNKNOWN_ICON;
+      eqQuiverName.textContent = `${Items.wooden_arrow?.name ?? "Wooden Arrow"} x${arrows}`;
+      eqQuiverQty.textContent = String(arrows);
+      eqQuiverQty.classList.remove("isHidden");
+    } else {
+      eqQuiverIcon.textContent = "-";
+      eqQuiverName.textContent = "Empty";
+      eqQuiverQty.textContent = "0";
+      eqQuiverQty.classList.add("isHidden");
+    }
+  }
+
   function renderEquipment(){
     const w = equipment.weapon;
     const o = equipment.offhand;
@@ -2093,6 +2218,7 @@ if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCom
       eqOffhandName.textContent = "Empty";
     }
 
+    renderQuiverSlot();
     renderQuiver();
   }
 
@@ -2304,6 +2430,21 @@ if (opt.className) b.classList.add(opt.className);
       return;
     }
 
+    if (item.stack){
+      const have = Math.max(1, s.qty|0);
+      const want = qty==null ? 1 : Math.min(Math.max(1, qty|0), have);
+      const ok = addToBank(bank, id, want);
+      if (!ok){
+        chatLine(`<span class="warn">Bank is full.</span>`);
+        return;
+      }
+      const left = have - want;
+      inv[invIndex] = left > 0 ? { id, qty: left } : null;
+      renderInv();
+      renderBank();
+      return;
+    }
+
     const want = qty==null ? 1 : Math.max(1, qty|0);
     let moved = 0;
     for (let i=0;i<want;i++){
@@ -2361,7 +2502,10 @@ if (opt.className) b.classList.add(opt.className);
     if (!availability.bank) return chatLine(`<span class="warn">You must be at a bank chest.</span>`);
     for (let i=0;i<MAX_INV;i++){
       const s=inv[i]; if (!s) continue;
-      const ok = addToBank(bank, s.id, 1);
+      const item = Items[s.id];
+      if (!item) continue;
+      const qty = item.stack ? Math.max(1, s.qty|0) : 1;
+      const ok = addToBank(bank, s.id, qty);
       if (!ok) break;
       inv[i]=null;
     }
@@ -2519,7 +2663,9 @@ if (toolId === "flint_steel" && targetId === "log") {
     }
 
     const slotName = canEquip(s.id);
-    if (slotName){
+    if (item?.ammo){
+      opts.push({ label: "Equip", onClick: ()=> equipAmmoFromInv(idx) });
+    } else if (slotName){
       opts.push({ label: "Equip", onClick: ()=> equipFromInv(idx) });
     }
 
@@ -2534,32 +2680,45 @@ if (toolId === "flint_steel" && targetId === "log") {
 
     opts.push({ label: "Drop", onClick: ()=>{
       // drop to ground pile at player tile (no deletion)
-      
-      inv[idx]=null;
-	lockManualDropAt(player.x, player.y);
+
+      if (item?.stack && (s.qty|0) > 1){
+        inv[idx] = { id: s.id, qty: (s.qty|0) - 1 };
+      } else {
+        inv[idx]=null;
+      }
+      lockManualDropAt(player.x, player.y);
       addGroundLoot(player.x, player.y, s.id, 1);
       renderInv();
       chatLine(`<span class="muted">You drop the ${item?.name ?? s.id}.</span>`);
     }});
 
 
-    opts.push({ label: "Drop X…", onClick: ()=>{
+    opts.push({ label: "Drop X...", onClick: ()=>{
       const v=prompt("Drop how many?", "10");
       const n=Math.max(1, parseInt(v||"",10) || 0);
       if (!n) return;
 
       lockManualDropAt(player.x, player.y);
-      let remaining = n;
-      for (let i=0; i<inv.length && remaining>0; i++){
-
-        if (inv[i] && inv[i].id === s.id){
-          inv[i] = null;
-          addGroundLoot(player.x, player.y, s.id, 1);
-          remaining--;
+      let dropped = 0;
+      if (item?.stack){
+        const have = Math.max(1, s.qty|0);
+        dropped = Math.min(n, have);
+        const left = have - dropped;
+        inv[idx] = left > 0 ? { id: s.id, qty: left } : null;
+        if (dropped > 0) addGroundLoot(player.x, player.y, s.id, dropped);
+      } else {
+        let remaining = n;
+        for (let i=0; i<inv.length && remaining>0; i++){
+          if (inv[i] && inv[i].id === s.id){
+            inv[i] = null;
+            addGroundLoot(player.x, player.y, s.id, 1);
+            remaining--;
+          }
         }
+        dropped = n - remaining;
       }
       renderInv();
-      chatLine(`<span class="muted">You drop ${n-remaining}x ${item?.name ?? s.id}.</span>`);
+      chatLine(`<span class="muted">You drop ${dropped}x ${item?.name ?? s.id}.</span>`);
     }});
 
     openCtxMenu(e.clientX, e.clientY, opts);
@@ -2653,8 +2812,42 @@ return;
     openCtxMenu(e.clientX, e.clientY, opts);
   }
 
+  function moveArrowsToInventory(qty=null){
+    const before = getQuiverCount();
+    if (before <= 0){
+      chatLine(`<span class="warn">No arrows in quiver.</span>`);
+      return;
+    }
+
+    const moved = moveAmmoFromQuiverToInventory("wooden_arrow", qty);
+    if (moved <= 0){
+      chatLine(`<span class="warn">Inventory full.</span>`);
+      return;
+    }
+
+    chatLine(`<span class="muted">You move ${moved}x ${Items.wooden_arrow.name} to your inventory.</span>`);
+  }
+
+  function quiverSlotContextMenu(e){
+    e.preventDefault();
+    if (getQuiverCount() <= 0) return;
+
+    const opts = [
+      { label: "Move 1 to Inventory", onClick: ()=> moveArrowsToInventory(1) },
+      { label: "Move 10 to Inventory", onClick: ()=> moveArrowsToInventory(10) },
+      { label: "Move X...", onClick: ()=>{
+        const v = prompt("Move how many arrows to inventory?", "10");
+        const n = Math.max(1, parseInt(v||"",10) || 0);
+        if (n > 0) moveArrowsToInventory(n);
+      }},
+      { label: "Move All to Inventory", onClick: ()=> moveArrowsToInventory(null) }
+    ];
+    openCtxMenu(e.clientX, e.clientY, opts);
+  }
+
   document.getElementById("eqWeapon").addEventListener("contextmenu", (e)=> equipSlotContextMenu(e, "weapon"));
   document.getElementById("eqOffhand").addEventListener("contextmenu", (e)=> equipSlotContextMenu(e, "offhand"));
+  document.getElementById("eqQuiver").addEventListener("contextmenu", quiverSlotContextMenu);
 
   document.getElementById("eqWeapon").addEventListener("mousedown", (e)=>{
     if (e.button !== 0) return;
@@ -2940,7 +3133,14 @@ if (it.type === "anvil")   return { kind:"anvil", index: idx, label:"Anvil", x:i
 
   function examineEntity(ent){
     if (!ent) return;
-    if (ent.kind==="mob") chatLine(`<span class="muted">It's a small, scrappy rat.</span>`);
+    if (ent.kind==="mob"){
+      const m = mobs[ent.index];
+      if (m?.type === "goblin"){
+        chatLine(`<span class="muted">A mean little goblin with scavenged gear.</span>`);
+      } else {
+        chatLine(`<span class="muted">It's a small, scrappy rat.</span>`);
+      }
+    }
     if (ent.kind==="res" && ent.label==="Tree") chatLine(`<span class="muted">A sturdy tree. Looks good for logs.</span>`);
     if (ent.kind==="res" && ent.label==="Rock") chatLine(`<span class="muted">A mineral rock. Might contain ore.</span>`);
     if (ent.kind==="bank") chatLine(`<span class="muted">A secure bank chest.</span>`);
@@ -3837,33 +4037,62 @@ if (style === "magic"){
       m.aggroUntil = 0;
       m.attackCooldownUntil = 0;
       m.moveCooldownUntil = 0;
-      chatLine(`<span class="good">You defeat the rat.</span>`);
-      // Extra drop: raw rat meat
-      if (Math.random() < 0.55){
-        const got = addToInventory("rat_meat", 1);
-        if (got === 1){
-          chatLine(`<span class="good">The rat drops raw meat.</span>`);
-        } else {
-          addGroundLoot(m.x, m.y, "rat_meat", 1);
-          chatLine(`<span class="warn">Inventory full: ${Items.rat_meat.name}</span>`);
+      chatLine(`<span class="good">You defeat the ${mobName}.</span>`);
+      if (m.type === "goblin"){
+        if (Math.random() < 0.78){
+          const got = addToInventory("bone", 1);
+          if (got === 1){
+            chatLine(`<span class="good">The goblin drops a bone.</span>`);
+          } else {
+            addGroundLoot(m.x, m.y, "bone", 1);
+            chatLine(`<span class="warn">Inventory full: ${Items.bone.name}</span>`);
+          }
         }
-      }
-
-
-      if (Math.random() < 0.75){
-        const got = addToInventory("bone", 1);
-        if (got === 1){
-          chatLine(`<span class="good">The rat drops a bone.</span>`);
-        } else {
-          addGroundLoot(m.x, m.y, "bone", 1);
-          chatLine(`<span class="warn">Inventory full: ${Items.bone.name}</span>`);
+        if (Math.random() < 0.50){
+          const oreGot = addToInventory("ore", 1);
+          if (oreGot === 1){
+            chatLine(`<span class="good">The goblin drops some ore.</span>`);
+          } else {
+            addGroundLoot(m.x, m.y, "ore", 1);
+            chatLine(`<span class="warn">Inventory full: ${Items.ore.name}</span>`);
+          }
         }
-        if (Math.random() < 0.65){
-  const g = 1 + Math.floor(Math.random()*8);
-  addGold(g);
-  chatLine(`<span class="good">You gain ${g} gold.</span>`);
-}
+        if (Math.random() < 0.62){
+          const arrowCount = 2 + Math.floor(Math.random()*5);
+          addToInventory("wooden_arrow", arrowCount);
+          chatLine(`<span class="good">The goblin drops ${arrowCount} wooden arrows.</span>`);
+        }
+        if (Math.random() < 0.88){
+          const g = 4 + Math.floor(Math.random()*12);
+          addGold(g);
+          chatLine(`<span class="good">You gain ${g} gold.</span>`);
+        }
+      } else {
+        // Extra drop: raw rat meat
+        if (Math.random() < 0.55){
+          const got = addToInventory("rat_meat", 1);
+          if (got === 1){
+            chatLine(`<span class="good">The rat drops raw meat.</span>`);
+          } else {
+            addGroundLoot(m.x, m.y, "rat_meat", 1);
+            chatLine(`<span class="warn">Inventory full: ${Items.rat_meat.name}</span>`);
+          }
+        }
 
+        if (Math.random() < 0.75){
+          const got = addToInventory("bone", 1);
+          if (got === 1){
+            chatLine(`<span class="good">The rat drops a bone.</span>`);
+          } else {
+            addGroundLoot(m.x, m.y, "bone", 1);
+            chatLine(`<span class="warn">Inventory full: ${Items.bone.name}</span>`);
+          }
+          if (Math.random() < 0.65){
+            const g = 1 + Math.floor(Math.random()*8);
+            addGold(g);
+            chatLine(`<span class="good">You gain ${g} gold.</span>`);
+          }
+        }
       }
 
       stopAction();
@@ -4283,12 +4512,113 @@ if (item.ammo){
     ctx.restore();
   }
 
+  function drawGoblin(m){
+    const baseCx = (Number.isFinite(m.px) ? m.px : (m.x*TILE+TILE/2));
+    const baseCy = (Number.isFinite(m.py) ? m.py : (m.y*TILE+TILE/2));
+    const px = baseCx - TILE/2;
+    const py = baseCy - TILE/2;
+
+    const prevCx = Number.isFinite(m._prevDrawCx) ? m._prevDrawCx : baseCx;
+    const dx = baseCx - prevCx;
+    if (Math.abs(dx) > 0.06) m._faceX = (dx >= 0) ? 1 : -1;
+    if (!Number.isFinite(m._faceX)) m._faceX = 1;
+    m._prevDrawCx = baseCx;
+    const face = m._faceX;
+
+    const t = now();
+    const bob = Math.sin(t*0.01 + m.x*0.77 + m.y*0.59) * 0.8;
+    const armSwing = Math.sin(t*0.016 + m.x*0.58 + m.y*0.61) * 1.5;
+    const cx = baseCx;
+    const cy = baseCy + bob;
+
+    ctx.save();
+
+    ctx.fillStyle = "rgba(0,0,0,.26)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 11.5, 9.8, 4.6, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Legs
+    ctx.fillStyle = "#2c3f2a";
+    ctx.fillRect(cx - 6, cy + 8.5, 4.2, 2.6);
+    ctx.fillRect(cx + 1.8, cy + 8.5, 4.2, 2.6);
+
+    // Torso
+    ctx.fillStyle = "#4a7f37";
+    ctx.beginPath();
+    ctx.ellipse(cx - face*0.9, cy + 3.6, 8.8, 7.4, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.18)";
+    ctx.beginPath();
+    ctx.ellipse(cx - face*2.7, cy + 1.4, 3.6, 2.2, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.4)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(cx - face*0.9, cy + 3.6, 8.8, 7.4, 0, 0, Math.PI*2);
+    ctx.stroke();
+
+    // Head
+    const headX = cx + face*4.7;
+    ctx.fillStyle = "#6aa84f";
+    ctx.beginPath();
+    ctx.ellipse(headX, cy - 2.2, 5.8, 5.3, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(headX, cy - 2.2, 5.8, 5.3, 0, 0, Math.PI*2);
+    ctx.stroke();
+
+    // Ear
+    ctx.fillStyle = "#5f9247";
+    ctx.beginPath();
+    ctx.moveTo(headX + face*3.8, cy - 3.2);
+    ctx.lineTo(headX + face*6.9, cy - 5.0);
+    ctx.lineTo(headX + face*4.4, cy - 0.8);
+    ctx.closePath();
+    ctx.fill();
+
+    // Eye + tooth
+    ctx.fillStyle = "rgba(0,0,0,.82)";
+    ctx.beginPath();
+    ctx.arc(headX + face*1.4, cy - 3.0, 0.95, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#f3f4f6";
+    ctx.fillRect(headX + face*3.8, cy + 0.9, 1.1, 1.8);
+
+    // Dagger hand
+    ctx.fillStyle = "#4d7f3f";
+    ctx.beginPath();
+    ctx.ellipse(cx + face*(8.8 + armSwing*0.15), cy + 4.0, 2.0, 1.6, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = "#9ca3af";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(cx + face*(10.0 + armSwing*0.2), cy + 3.8);
+    ctx.lineTo(cx + face*(14.1 + armSwing*0.2), cy + 2.8);
+    ctx.stroke();
+
+    // HP bar
+    ctx.fillStyle = "rgba(0,0,0,.56)";
+    ctx.fillRect(px+6, py+3, TILE-12, 5);
+    ctx.fillStyle = "#84cc16";
+    const w = clamp((m.hp/m.maxHp)*(TILE-12), 0, TILE-12);
+    ctx.fillRect(px+6, py+3, w, 5);
+    ctx.fillStyle = "rgba(255,255,255,.25)";
+    ctx.fillRect(px+6, py+3, w, 1);
+
+    ctx.restore();
+  }
+
   function drawMobs(){
     const {startX,startY,endX,endY}=visibleTileBounds();
     for (const m of mobs){
       if (!m.alive) continue;
       if (m.x<startX-1 || m.x>endX+1 || m.y<startY-1 || m.y>endY+1) continue;
       if (m.type==="rat") drawRat(m);
+      else if (m.type==="goblin") drawGoblin(m);
+      else drawRat(m);
     }
   }
 
@@ -5555,6 +5885,35 @@ function drawPlayerWeapon(cx, cy, fx, fy){
       // always restore static interactables (bank/vendor)
       seedInteractables();
 
+      // Save migration: inject the goblin pocket for older saves that predate goblins.
+      if (!mobs.some(m => m && m.type === "goblin")){
+        const goblinSeedRng = makeRng(worldState.seed ^ 0x77C4D91F);
+        const anchorX = 37;
+        const anchorY = 13;
+        const desired = 4;
+        let placed = 0;
+
+        function tileOkForLoadedGoblin(x,y){
+          if (!inBounds(x,y)) return false;
+          if (!isWalkable(x,y)) return false;
+          if (map[y][x] !== 0) return false;
+          if (y > (RIVER_Y - 5)) return false;
+          if (Math.abs(x - anchorX) > 7 || Math.abs(y - anchorY) > 5) return false;
+          if (resources.some(r => r.alive && r.x===x && r.y===y)) return false;
+          if (interactables.some(it => it.x===x && it.y===y)) return false;
+          if (mobs.some(m => m.alive && m.x===x && m.y===y)) return false;
+          return true;
+        }
+
+        for (let a=0; a<4000 && placed<desired; a++){
+          const x = anchorX + randInt(goblinSeedRng, -7, 7);
+          const y = anchorY + randInt(goblinSeedRng, -5, 5);
+          if (!tileOkForLoadedGoblin(x,y)) continue;
+          placeMob("goblin", x, y);
+          placed++;
+        }
+      }
+
       // restore saved fires
       if (Array.isArray(data?.world?.fires)){
         for (const f of data.world.fires){
@@ -5636,13 +5995,11 @@ function drawPlayerWeapon(cx, cy, fx, fy){
 
         const qty = Math.max(1, (s.qty|0) || 1);
 
-               // route gold/ammo to wallet/quiver
+               // route gold to wallet; keep ammo in inventory if it was saved there
         if (id === GOLD_ITEM_ID){
           addGold(qty);
-        } else if (item.ammo){
-          addToQuiver(id, qty);
         } else {
-          addToInventory(id, qty);
+          addToInventory(id, qty, { forceInventory: item.ammo });
         }
 
       }

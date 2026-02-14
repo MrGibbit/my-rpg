@@ -18,8 +18,10 @@ Use this file as the live notes while building.
 - Added a dedicated vendor shop building and environment dressing.
 - Moved the vendor NPC into the new shop location.
 - Rat enemy visual refresh with a more detailed sprite pass (layered body/head, shading, whiskers, motion, and facing).
+- Equipment tab now includes a dedicated Quiver slot with live arrow icon/count display.
 
 **World + Encounters (from today)**
+- Added goblins as a new enemy encounter.
 - Rat spawn distribution reworked for more natural spacing (less uniform spread).
 - Rats now form a stronger starter training cluster while still keeping a small number of natural strays.
 - Rat training packs are now positioned south of the river.
@@ -31,6 +33,13 @@ Use this file as the live notes while building.
 - XP routing by style clarified (Melee, Ranged, Sorcery) with Health XP integration.
 - Enemy attack context menu entries now use level-difference coloring for clarity.
 - Save migration compatibility added for legacy `combat` XP data.
+
+**Inventory + Ammo (from today)**
+- Added quiver right-click actions to move arrows to inventory (`1`, `10`, `X`, `All`).
+- Arrows moved into inventory now stack in one slot (RuneScape-style behavior).
+- Arrow stacks in inventory can now be equipped directly back into quiver.
+- Fixed stack quantity handling for arrow drop/deposit/sell flows.
+- Save/load now preserves arrows intentionally stored in inventory.
 
 **Technical / Stability**
 - Fixed GitHub Pages module 404 issues.
@@ -51,6 +60,7 @@ If you still see old behavior after deploy, hard refresh once (Ctrl+F5).
 - Castle visual/decor overhaul pass for stronger world readability.
 - Added a dedicated vendor shop area and relocated the vendor NPC into it.
 - Rat enemy visual upgrade with improved readability/animation.
+- Added goblins as an additional enemy type for world combat encounters.
 - Skills label/naming consistency updates and runtime mapping support.
 - Save compatibility migration handling for older combat XP format.
 - Rat spawn system pass:
@@ -77,6 +87,12 @@ If you still see old behavior after deploy, hard refresh once (Ctrl+F5).
 - `README.md` module layout safety section.
 - `README.md` patch notes workflow section.
 - Added `PATCH_NOTES.md` to maintain Discord-ready notes continuously.
+- Added equipment-panel quiver slot with visible arrow stack count.
+- Added quiver context actions to move arrows into inventory.
+- Implemented RuneScape-style arrow stacking when arrows are in inventory.
+- Added equip-from-inventory for arrow stacks (moves back to quiver).
+- Corrected stack-aware behavior for arrow drop/deposit/sell actions.
+- Preserved inventory-stored arrows through save/load.
 
 ### Internal Notes
 - Keep this section updated as work happens.

@@ -10,7 +10,6 @@ export const map = Array.from({ length: H }, () => Array.from({ length: W }, () 
 for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) map[y][x] = 0;
 
 for (let x = 2; x < W - 2; x++) { map[RIVER_Y][x] = 1; map[RIVER_Y + 1][x] = 1; }
-for (const bx of [7, 8, 42, 43]) { map[RIVER_Y][bx] = 5; map[RIVER_Y + 1][bx] = 5; }
 
 function stampCastle(x0, y0, w, h) {
   for (let y = y0; y < y0 + h; y++) {
@@ -28,16 +27,136 @@ function stampCastle(x0, y0, w, h) {
 }
 
 export const startCastle = stampCastle(2, 2, 12, 8);
-for (let y = startCastle.gateY; y <= RIVER_Y + 1; y++) { map[y][startCastle.gateX] = 5; map[y][startCastle.gateX - 1] = 5; }
-for (let x = Math.min(startCastle.gateX - 1, 7); x <= Math.max(startCastle.gateX, 8); x++) map[RIVER_Y - 1][x] = 5;
-for (let y = RIVER_Y + 2; y < H - 2; y++) { map[y][8] = 5; }
-
-for (let x = 8; x <= 42; x++) map[RIVER_Y - 3][x] = 5;
-for (let y = RIVER_Y - 3; y <= RIVER_Y + 1; y++) map[y][42] = 5;
-
 export const southKeep = stampCastle(44, 30, 12, 8);
-for (let y = RIVER_Y + 2; y <= southKeep.gateY + 2; y++) map[y][42] = 5;
-for (let x = 42; x <= southKeep.gateX; x++) map[southKeep.gateY + 2][x] = 5;
+
+function hash01(x, y, seed = 0) {
+  let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(seed | 0, 2147483647);
+  h = (h ^ (h >>> 13)) | 0;
+  h = Math.imul(h, 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967295;
+}
+
+function paintPath(x, y) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const t = map[y][x];
+  if (t === 0 || t === 5) map[y][x] = 5;
+}
+
+function carvePathSegment(x0, y0, x1, y1, seed) {
+  let x = x0 | 0;
+  let y = y0 | 0;
+  let step = 0;
+  let lastAxis = 0; // 1 = x, 2 = y
+
+  while (true) {
+    paintPath(x, y);
+
+    if (x === x1 && y === y1) break;
+
+    const dx = x1 - x;
+    const dy = y1 - y;
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+
+    // Very light width variation so roads remain mostly straight/readable.
+    if (hash01(x, y, seed + 17 + step) < 0.03) {
+      if (ax >= ay) {
+        const sideY = hash01(x, y, seed + 23 + step) < 0.5 ? -1 : 1;
+        paintPath(x, y + sideY);
+      } else {
+        const sideX = hash01(x, y, seed + 29 + step) < 0.5 ? -1 : 1;
+        paintPath(x + sideX, y);
+      }
+    }
+
+    if (ax && ay) {
+      // Strongly bias toward the dominant axis to reduce zig-zag.
+      const r = hash01(x, y, seed + step);
+      let pickX;
+      if (ax > ay) pickX = (r < 0.92);
+      else if (ay > ax) pickX = (r < 0.08);
+      else if (lastAxis === 1) pickX = (r < 0.72);
+      else if (lastAxis === 2) pickX = (r < 0.28);
+      else pickX = (r < 0.5);
+
+      if (pickX) {
+        x += Math.sign(dx);
+        lastAxis = 1;
+      } else {
+        y += Math.sign(dy);
+        lastAxis = 2;
+      }
+    } else if (ax) {
+      x += Math.sign(dx);
+      lastAxis = 1;
+    } else if (ay) {
+      y += Math.sign(dy);
+      lastAxis = 2;
+    }
+
+    step++;
+    if (step > W * H * 4) break;
+  }
+}
+
+function carvePathPolyline(points, seed) {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    carvePathSegment(a.x, a.y, b.x, b.y, seed + i * 97);
+  }
+}
+
+const northGate = { x: startCastle.gateX, y: startCastle.gateY };
+const southGate = { x: southKeep.gateX, y: southKeep.gateY + 2 };
+
+// Starter castle -> north bridge approach.
+carvePathPolyline([
+  { x: northGate.x, y: northGate.y },
+  { x: 8, y: RIVER_Y - 1 }
+], 11);
+
+// North main road (mostly straight with a gentle bend near the bridge approach).
+carvePathPolyline([
+  { x: 8, y: RIVER_Y - 1 },
+  { x: 14, y: RIVER_Y - 2 },
+  { x: 36, y: RIVER_Y - 2 },
+  { x: 42, y: RIVER_Y - 3 }
+], 29);
+
+// North road -> south bridge approach.
+carvePathPolyline([
+  { x: 42, y: RIVER_Y - 3 },
+  { x: 42, y: RIVER_Y - 1 }
+], 47);
+
+// South bridge -> south keep road.
+carvePathPolyline([
+  { x: 42, y: RIVER_Y + 2 },
+  { x: 42, y: southGate.y - 2 },
+  { x: 43, y: southGate.y - 1 },
+  { x: 42, y: southGate.y }
+], 71);
+
+// South keep approach.
+carvePathPolyline([
+  { x: 42, y: southGate.y },
+  { x: 49, y: southGate.y },
+  { x: southGate.x, y: southGate.y }
+], 89);
+
+// Fixed single-width bridge lanes over water.
+for (const bx of [8, 42]) {
+  map[RIVER_Y][bx] = 5;
+  map[RIVER_Y + 1][bx] = 5;
+}
+
+// Extra tie-in tiles around each bridge mouth.
+for (const bx of [8, 42]) {
+  paintPath(bx, RIVER_Y - 1);
+  paintPath(bx, RIVER_Y + 2);
+}
 
 // ---------- Skills ----------
 export const Skills = {
@@ -48,7 +167,7 @@ export const Skills = {
   sorcery: { name: "Sorcery", xp: 0 },
   health: { name: "Health", xp: 0 },
   fletching: { name: "Fletching", xp: 0 },
-  woodcutting: { name: "Woodcut", xp: 0 },
+  woodcutting: { name: "Woodcutting", xp: 0 },
   mining: { name: "Mining", xp: 0 },
   fishing: { name: "Fishing", xp: 0 },
   firemaking: { name: "Firemaking", xp: 0 },

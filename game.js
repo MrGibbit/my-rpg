@@ -65,12 +65,217 @@ import {
   // ---------- Map / pathfinding ----------
   const { inBounds, isWalkable, isIndoors, astar } = createNavigation(map, W, H);
 
-  const SKILL_ICONS = {
-    accuracy:"🎯", power:"💪", defense:"🛡️", ranged:"🏹", sorcery:"✨", fletching:"🪶", health:"❤️",
-    woodcutting:"🪵", mining:"⛏️", fishing:"🎣", firemaking:"🔥", cooking:"🍳"
+  function iconTile(body, top, mid, edge = "#26180f"){
+    return `<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
+      <rect x="1" y="1" width="14" height="14" rx="2" fill="${edge}"/>
+      <rect x="2" y="2" width="12" height="12" rx="1" fill="${mid}"/>
+      <rect x="2" y="2" width="12" height="4" fill="${top}" opacity=".95"/>
+      <rect x="2" y="9" width="12" height="5" fill="rgba(0,0,0,.24)"/>
+      <rect x="3" y="3" width="1" height="1" fill="rgba(255,255,255,.25)"/>
+      <rect x="12" y="3" width="1" height="1" fill="rgba(255,255,255,.18)"/>
+      ${body}
+    </svg>`;
+  }
 
-
+  const GLYPHS = {
+    unknown: `
+      <rect x="6" y="4" width="4" height="1" fill="#f8fafc"/>
+      <rect x="9" y="5" width="1" height="2" fill="#f8fafc"/>
+      <rect x="8" y="7" width="1" height="1" fill="#f8fafc"/>
+      <rect x="7" y="8" width="1" height="1" fill="#f8fafc"/>
+      <rect x="7" y="10" width="2" height="2" fill="#f8fafc"/>
+    `,
+    sword: `
+      <rect x="7" y="2" width="2" height="8" fill="#dbe6f3"/>
+      <rect x="6" y="4" width="4" height="1" fill="#f8fafc"/>
+      <rect x="6" y="9" width="4" height="1" fill="#8b5a2b"/>
+      <rect x="7" y="10" width="2" height="3" fill="#b7793e"/>
+      <rect x="7" y="12" width="2" height="1" fill="#5b3a1d"/>
+    `,
+    shield: `
+      <path d="M8 2 L12 4 L11 10 L8 13 L5 10 L4 4 Z" fill="#94a3b8"/>
+      <path d="M8 3.1 L11 4.5 L10.3 9.5 L8 11.8 L5.7 9.5 L5 4.5 Z" fill="#cbd5e1"/>
+      <rect x="7.5" y="4" width="1" height="7" fill="#475569"/>
+    `,
+    bow: `
+      <path d="M11.7 2.7 C9.8 4.3 9 6.1 9 8 C9 9.9 9.8 11.7 11.7 13.3" fill="none" stroke="#d6a96a" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="10.1" y1="3.2" x2="10.1" y2="12.8" stroke="#f1f5f9" stroke-width="1"/>
+      <rect x="4" y="7.5" width="5" height="1" fill="#94a3b8"/>
+      <path d="M3 8 L5 7 L5 9 Z" fill="#f8fafc"/>
+      <rect x="8.5" y="7" width="2" height="2" fill="#7c2d12"/>
+    `,
+    arrow: `
+      <rect x="3" y="7" width="8" height="2" fill="#dbeafe"/>
+      <path d="M2 8 L4 6.8 L4 9.2 Z" fill="#f8fafc"/>
+      <path d="M12 8 L10.8 6.7 L10.8 9.3 Z" fill="#9a3412"/>
+      <path d="M11.2 8 L9.8 6.8 L9.8 9.2 Z" fill="#ea580c"/>
+    `,
+    staff: `
+      <rect x="7" y="3" width="2" height="10" fill="#9a6b3b"/>
+      <rect x="6" y="2" width="4" height="2" fill="#c4b5fd"/>
+      <rect x="7" y="1" width="2" height="1" fill="#f5f3ff"/>
+      <rect x="6" y="5" width="1" height="1" fill="#fef3c7"/>
+      <rect x="9" y="8" width="1" height="1" fill="#fde68a"/>
+    `,
+    axe: `
+      <rect x="7" y="3" width="2" height="10" fill="#8b5a2b"/>
+      <path d="M9 4 L13 5.5 L13 8 L9 8 Z" fill="#cbd5e1"/>
+      <path d="M6.5 5 L9 4.5 L9 8.5 L6.5 9 Z" fill="#94a3b8"/>
+      <rect x="7" y="11" width="2" height="1" fill="#5b3a1d"/>
+    `,
+    pick: `
+      <rect x="7" y="3" width="2" height="10" fill="#8b5a2b"/>
+      <path d="M4 5 C6 3.5 10 3.5 12 5" fill="none" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round"/>
+      <path d="M5 6.5 C6.5 7.2 9.5 7.2 11 6.5" fill="none" stroke="#94a3b8" stroke-width="1"/>
+    `,
+    knife: `
+      <path d="M4 9 L10.5 4.3 L12 5.8 L5.4 10.4 Z" fill="#e2e8f0"/>
+      <path d="M10.4 4.3 L12.8 3.4 L12 5.8 Z" fill="#f8fafc"/>
+      <rect x="3.2" y="9.2" width="3" height="2" fill="#7c2d12"/>
+      <rect x="3.8" y="9.8" width="1" height="1" fill="#fbbf24"/>
+    `,
+    coin: `
+      <circle cx="8" cy="8" r="4.2" fill="#facc15"/>
+      <circle cx="8" cy="8" r="3.2" fill="#fde047"/>
+      <circle cx="8" cy="8" r="1.2" fill="#ca8a04"/>
+      <rect x="6.8" y="4.2" width="2.4" height="1" fill="rgba(255,255,255,.35)"/>
+    `,
+    flint: `
+      <path d="M4 10 L8 4 L11 5 L9 11 L5 12 Z" fill="#64748b"/>
+      <path d="M8.8 6.7 L11.7 3.8 L12.4 4.5 L9.5 7.4 Z" fill="#f1f5f9"/>
+      <rect x="11.6" y="2.8" width="1" height="1" fill="#fde68a"/>
+      <rect x="12.5" y="3.6" width="1" height="1" fill="#fb923c"/>
+      <rect x="10.9" y="3.5" width="1" height="1" fill="#fbbf24"/>
+    `,
+    log: `
+      <rect x="3" y="6" width="10" height="4" rx="1" fill="#8b5a2b"/>
+      <rect x="4" y="7" width="8" height="2" fill="#a16207"/>
+      <circle cx="4" cy="8" r="1.1" fill="#d6a96a"/>
+      <circle cx="12" cy="8" r="1.1" fill="#d6a96a"/>
+      <circle cx="4" cy="8" r=".5" fill="#8b5a2b"/>
+      <circle cx="12" cy="8" r=".5" fill="#8b5a2b"/>
+    `,
+    ore: `
+      <path d="M8 3 L12 5 L11 10 L7 12 L4 9 L5 5 Z" fill="#94a3b8"/>
+      <path d="M8 4.3 L10.8 5.8 L10.1 9.2 L7.2 10.8 L5.5 8.8 L6.1 5.9 Z" fill="#cbd5e1"/>
+      <rect x="7" y="6" width="1.2" height="1.2" fill="#f8fafc"/>
+      <rect x="8.8" y="8.3" width="1" height="1" fill="#f8fafc"/>
+    `,
+    bone: `
+      <circle cx="4.8" cy="6.2" r="1.7" fill="#f1f5f9"/>
+      <circle cx="11.2" cy="9.8" r="1.7" fill="#f1f5f9"/>
+      <rect x="5.2" y="6.4" width="6" height="3.2" rx="1.2" fill="#e2e8f0"/>
+      <circle cx="4.2" cy="7.8" r="1.2" fill="#e2e8f0"/>
+      <circle cx="11.8" cy="8.2" r="1.2" fill="#e2e8f0"/>
+    `,
+    heart: `
+      <path d="M8 12 L3.8 8.3 C2.5 7.1 2.6 5 4.2 4.1 C5.3 3.5 6.7 3.8 7.5 4.8 L8 5.4 L8.5 4.8 C9.3 3.8 10.7 3.5 11.8 4.1 C13.4 5 13.5 7.1 12.2 8.3 Z" fill="#ef4444"/>
+      <path d="M8 10.8 L4.7 7.9 C3.8 7.1 3.8 5.8 4.8 5.2 C5.6 4.7 6.5 4.9 7 5.6 L8 6.8 L9 5.6 C9.5 4.9 10.4 4.7 11.2 5.2 C12.2 5.8 12.2 7.1 11.3 7.9 Z" fill="#f87171"/>
+    `,
+    target: `
+      <circle cx="8" cy="8" r="4.2" fill="none" stroke="#f1f5f9" stroke-width="1.2"/>
+      <circle cx="8" cy="8" r="2.2" fill="none" stroke="#f8fafc" stroke-width="1.2"/>
+      <circle cx="8" cy="8" r="1.1" fill="#f8fafc"/>
+      <rect x="7.7" y="2.3" width=".6" height="2.1" fill="#f8fafc"/>
+      <rect x="7.7" y="11.6" width=".6" height="2.1" fill="#f8fafc"/>
+      <rect x="2.3" y="7.7" width="2.1" height=".6" fill="#f8fafc"/>
+      <rect x="11.6" y="7.7" width="2.1" height=".6" fill="#f8fafc"/>
+    `,
+    gauntlet: `
+      <rect x="4" y="8" width="8" height="4" rx="1" fill="#d6a96a"/>
+      <rect x="5" y="6.5" width="2" height="2.2" fill="#f3cf9e"/>
+      <rect x="7" y="6" width="2" height="2.4" fill="#f3cf9e"/>
+      <rect x="9" y="6.3" width="2" height="2.2" fill="#f3cf9e"/>
+      <rect x="4.2" y="9" width="1.5" height="2" fill="#8b5a2b"/>
+      <rect x="10.8" y="9" width="1.2" height="2" fill="#8b5a2b"/>
+    `,
+    spark: `
+      <path d="M8 2.5 L9.3 6.7 L13.5 8 L9.3 9.3 L8 13.5 L6.7 9.3 L2.5 8 L6.7 6.7 Z" fill="#e9d5ff"/>
+      <circle cx="8" cy="8" r="1.2" fill="#f5f3ff"/>
+    `,
+    wizard_hat: `
+      <path d="M8 2.8 L11.8 10.7 H4.2 Z" fill="#7c3aed"/>
+      <path d="M8 4.4 L10.3 9.2 H5.7 Z" fill="#a78bfa"/>
+      <rect x="3.2" y="10.5" width="9.6" height="1.7" rx=".8" fill="#5b21b6"/>
+      <rect x="5.9" y="10.7" width="4.2" height=".8" fill="#facc15"/>
+      <rect x="7.2" y="6.1" width=".9" height=".9" fill="#f8fafc"/>
+      <rect x="9.2" y="8.1" width=".8" height=".8" fill="#f8fafc"/>
+    `,
+    feather: `
+      <path d="M12 3.5 C8.5 3.5 5 6.2 4 10 L7.5 12 C10.8 10.7 12.8 7.6 12 3.5 Z" fill="#f3f4f6"/>
+      <path d="M5 10.6 L11 4.8" stroke="#9ca3af" stroke-width="1" stroke-linecap="round"/>
+      <path d="M5.8 9.2 L8 10.6 M7.2 7.8 L9.2 9.2 M8.7 6.5 L10.2 7.6" stroke="#cbd5e1" stroke-width=".7" stroke-linecap="round"/>
+    `,
+    tree: `
+      <rect x="7" y="8.5" width="2" height="4.5" fill="#8b5a2b"/>
+      <circle cx="8" cy="6" r="3.5" fill="#16a34a"/>
+      <circle cx="6.3" cy="6.8" r="2.1" fill="#22c55e"/>
+      <circle cx="9.7" cy="6.8" r="2.1" fill="#15803d"/>
+    `,
+    fish: `
+      <ellipse cx="8.3" cy="8" rx="3.8" ry="2.4" fill="#93c5fd"/>
+      <path d="M4.7 8 L2.8 6.6 L2.8 9.4 Z" fill="#bfdbfe"/>
+      <circle cx="9.4" cy="7.5" r=".5" fill="#0f172a"/>
+      <path d="M7.4 8.9 C8 9.3 8.8 9.3 9.4 8.9" stroke="#1d4ed8" stroke-width=".7" fill="none"/>
+    `,
+    fire: `
+      <path d="M8 3.2 C9.3 4.5 9.8 5.8 9.7 7.2 C10.8 7.8 11.5 9 11.2 10.4 C10.9 11.8 9.7 12.8 8 12.8 C6.3 12.8 5.1 11.8 4.8 10.4 C4.5 9 5.2 7.8 6.3 7.2 C6.2 5.8 6.7 4.5 8 3.2 Z" fill="#f97316"/>
+      <path d="M8 5.3 C8.8 6.1 9 6.9 8.9 7.8 C9.6 8.2 10 9 9.8 9.9 C9.6 10.9 8.9 11.5 8 11.5 C7.1 11.5 6.4 10.9 6.2 9.9 C6 9 6.4 8.2 7.1 7.8 C7 6.9 7.2 6.1 8 5.3 Z" fill="#fdba74"/>
+    `,
+    pot: `
+      <rect x="4" y="5.8" width="8" height="5.8" rx="1" fill="#9ca3af"/>
+      <rect x="5" y="6.8" width="6" height="3.8" fill="#cbd5e1"/>
+      <rect x="6.2" y="4.2" width="3.6" height="1.2" rx=".5" fill="#e2e8f0"/>
+      <rect x="3.4" y="7.2" width="1.2" height="2.2" fill="#94a3b8"/>
+      <rect x="11.4" y="7.2" width="1.2" height="2.2" fill="#94a3b8"/>
+      <rect x="6.1" y="3.3" width=".9" height="1" fill="#f8fafc"/>
+      <rect x="8.9" y="3.3" width=".9" height="1" fill="#f8fafc"/>
+    `
   };
+
+  const icon = (glyph, top, mid, edge) => iconTile(GLYPHS[glyph] ?? GLYPHS.unknown, top, mid, edge);
+  const flatIcon = (glyph) => `<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">${GLYPHS[glyph] ?? GLYPHS.unknown}</svg>`;
+
+  const UNKNOWN_ICON = icon("unknown", "#5b6d8a", "#2d3748", "#141b2d");
+  const SKILL_FALLBACK_ICON = flatIcon("unknown");
+
+  const SKILL_ICONS = {
+    health: flatIcon("heart"),
+    accuracy: flatIcon("target"),
+    power: flatIcon("gauntlet"),
+    defense: flatIcon("shield"),
+    ranged: flatIcon("bow"),
+    sorcery: flatIcon("wizard_hat"),
+    fletching: flatIcon("feather"),
+    woodcutting: flatIcon("tree"),
+    mining: flatIcon("pick"),
+    fishing: flatIcon("fish"),
+    firemaking: flatIcon("fire"),
+    cooking: flatIcon("pot")
+  };
+
+  const SKILL_NAMES = {
+    health: "Health",
+    accuracy: "Accuracy",
+    power: "Power",
+    defense: "Defense",
+    ranged: "Ranged",
+    sorcery: "Sorcery",
+    fletching: "Fletching",
+    woodcutting: "Woodcutting",
+    mining: "Mining",
+    fishing: "Fishing",
+    firemaking: "Firemaking",
+    cooking: "Cooking"
+  };
+
+  function getSkillName(skillKey){
+    return SKILL_NAMES[skillKey] ?? Skills[skillKey]?.name ?? skillKey;
+  }
+
+  for (const [k, name] of Object.entries(SKILL_NAMES)){
+    if (Skills[k]) Skills[k].name = name;
+  }
 // used to tint "Attack X" in the right-click menu
 function ctxLevelClass(playerLvl, enemyLvl){
   const d = (enemyLvl|0) - (playerLvl|0);
@@ -115,24 +320,24 @@ function levelStrokeForCls(cls){
   }
 
   const Items = {
-    axe:  { id:"axe",  name:"Crude Axe",  stack:false, icon:"🪓" },
-    pick: { id:"pick", name:"Crude Pick", stack:false, icon:"⛏️" },
-    knife:{ id:"knife",name:"Knife",      stack:false, icon:"🔪" },
-    gold: { id:"gold", name:"Coins", stack:true, currency:true, icon:"🪙" },
-    flint_steel:{ id:"flint_steel", name:"Flint & Steel", stack:false, icon:"🧷" },
+    axe:  { id:"axe",  name:"Crude Axe",  stack:false, icon:icon("axe", "#8f6a3b", "#4a321d", "#24160d") },
+    pick: { id:"pick", name:"Crude Pick", stack:false, icon:icon("pick", "#6e7f93", "#3a4558", "#1d2430") },
+    knife:{ id:"knife",name:"Knife",      stack:false, icon:icon("knife", "#7a7b7d", "#3b3c3f", "#1c1d1f") },
+    gold: { id:"gold", name:"Coins", stack:true, currency:true, icon:icon("coin", "#aa7a18", "#5a3f0c", "#2d1f06") },
+    flint_steel:{ id:"flint_steel", name:"Flint & Steel", stack:false, icon:icon("flint", "#4d6b74", "#283b40", "#141f22") },
 
-    sword: { id:"sword", name:"Sword", stack:false, icon:"🗡️", equipSlot:"weapon" },
-    shield:{ id:"shield",name:"Shield",stack:false, icon:"🛡️", equipSlot:"offhand" },
-    bow:   { id:"bow",   name:"Bow",   stack:false, icon:"🏹", equipSlot:"weapon" },
+    sword: { id:"sword", name:"Sword", stack:false, icon:icon("sword", "#748198", "#3b4455", "#1d222b"), equipSlot:"weapon" },
+    shield:{ id:"shield",name:"Shield",stack:false, icon:icon("shield", "#3f7267", "#22423b", "#11221e"), equipSlot:"offhand" },
+    bow:   { id:"bow",   name:"Bow",   stack:false, icon:icon("bow", "#89673c", "#4b341f", "#251a0f"), equipSlot:"weapon" },
 
-    wooden_arrow:{ id:"wooden_arrow", name:"Wooden Arrow", stack:true, ammo:true, icon:"➶" },
-    bronze_arrow:{ id:"bronze_arrow", name:"Bronze Arrow", stack:true, ammo:true, icon:"➶" },
+    wooden_arrow:{ id:"wooden_arrow", name:"Wooden Arrow", stack:true, ammo:true, icon:icon("arrow", "#8a653a", "#4b341f", "#261a10") },
+    bronze_arrow:{ id:"bronze_arrow", name:"Bronze Arrow", stack:true, ammo:true, icon:icon("arrow", "#a76f2f", "#5f3a16", "#311d0a") },
 
-    staff: { id:"staff", name:"Wooden Staff", stack:false, icon:"🪄", equipSlot:"weapon" },
+    staff: { id:"staff", name:"Wooden Staff", stack:false, icon:icon("staff", "#6b4ba3", "#3a2758", "#1f1430"), equipSlot:"weapon" },
 
-    log:  { id:"log",  name:"Log",  stack:true, icon:"🪵" },
-    ore:  { id:"ore",  name:"Ore",  stack:true, icon:"🪨" },
-    bone: { id:"bone", name:"Bone", stack:true, icon:"🦴" },
+    log:  { id:"log",  name:"Log",  stack:true, icon:icon("log", "#876239", "#4a321d", "#24160d") },
+    ore:  { id:"ore",  name:"Ore",  stack:true, icon:icon("ore", "#6f7f90", "#3a4454", "#1e2430") },
+    bone: { id:"bone", name:"Bone", stack:true, icon:icon("bone", "#7d868e", "#4c545c", "#24292e") },
     rat_meat: {
       id:"rat_meat",
       name:"Raw Rat Meat",
@@ -592,19 +797,20 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   function addXP(skillKey, amount){
     const s = Skills[skillKey];
     if (!s || !Number.isFinite(amount) || amount <= 0) return;
+    const skillName = getSkillName(skillKey);
     const before = levelFromXP(s.xp);
     s.xp += Math.floor(amount);
     // show XP gain (throttled per skill so it doesn't spam)
     const t = now();
     if ((t - (lastSkillXPMsgAt[skillKey] ?? 0)) > 900){
-      chatLine(`<span class="muted">+${Math.floor(amount)} ${s.name} XP</span>`);
+      chatLine(`<span class="muted">+${Math.floor(amount)} ${skillName} XP</span>`);
       lastSkillXPMsgAt[skillKey] = t;
     }
 
     const after = levelFromXP(s.xp);
 
     if ((lastSkillLevel[skillKey] ?? before) < after){
-      chatLine(`<span class="good">${s.name} leveled up to ${after}!</span>`);
+      chatLine(`<span class="good">${skillName} leveled up to ${after}!</span>`);
     }
     lastSkillLevel[skillKey] = after;
 
@@ -736,6 +942,7 @@ const DEFAULT_MOB_LEVELS = {
 
   // combat AI state
   target: null,            // "player" | null
+  provokedUntil: 0,        // passive mobs engage only after being hit
   aggroUntil: 0,
   attackCooldownUntil: 0,
   moveCooldownUntil: 0,
@@ -1273,7 +1480,7 @@ function renderVendorUI(){
       line.className = "shopRow";
       line.innerHTML = `
         <div class="shopLeft">
-          <div class="shopIcon">${it.icon ?? "❔"}</div>
+          <div class="shopIcon">${it.icon ?? UNKNOWN_ICON}</div>
           <div class="shopMeta">
             <div class="shopName">${it.name ?? row.id}</div>
             <div class="shopSub">Price: ${row.price} gold</div>
@@ -1336,7 +1543,7 @@ function renderVendorUI(){
     line.className = "shopRow";
     line.innerHTML = `
       <div class="shopLeft">
-        <div class="shopIcon">${it.icon ?? "❔"}</div>
+        <div class="shopIcon">${it.icon ?? UNKNOWN_ICON}</div>
         <div class="shopMeta">
           <div class="shopName">${it.name ?? id} ${count>1 ? `x${count}` : ""}</div>
           <div class="shopSub">Sell: ${price} gold</div>
@@ -1656,12 +1863,12 @@ const skillsCombatPillEl = document.getElementById("skillsCombatPill");
       slot.dataset.index=String(i);
 
       if (!s){
-        slot.innerHTML = `<div class="icon">·</div><div class="name">Empty</div>`;
+        slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
       } else {
         const item=Items[s.id];
         const qty = (s.qty|0) || 1;
         slot.innerHTML = `
-          <div class="icon">${item?.icon ?? "❔"}</div>
+          <div class="icon">${item?.icon ?? UNKNOWN_ICON}</div>
           <div class="name">${item?.name ?? s.id}</div>
           ${qty > 1 ? `<div class="qty">${qty}</div>` : ``}
         `;
@@ -1680,15 +1887,16 @@ if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCom
 
     for (const k of order){
       const s = Skills[k];
+      const skillName = getSkillName(k);
       const {lvl,next,pct} = xpToNext(s.xp);
       const toNext = Math.max(0, next - s.xp);
-      const icon = SKILL_ICONS[k] ?? "⭐";
+      const icon = SKILL_ICONS[k] ?? SKILL_FALLBACK_ICON;
 
       const div = document.createElement("div");
       div.className = "stat";
-      div.title = `${s.name}\nXP: ${s.xp}\nXP to next: ${toNext}`;
+      div.title = `${skillName}\nXP: ${s.xp}\nXP to next: ${toNext}`;
       div.innerHTML = `
-        <div class="k"><span class="ico">${icon}</span> ${s.name}</div>
+        <div class="k"><span class="ico">${icon}</span> ${skillName}</div>
         <div class="v">Lv ${lvl}</div>
         <div class="small">${s.xp} XP</div>
         <div class="bar"><div style="width:${clamp(pct,0,1)*100}%"></div></div>
@@ -1704,18 +1912,18 @@ if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCom
     const o = equipment.offhand;
 
     if (w){
-      eqWeaponIcon.textContent = Items[w]?.icon ?? "❔";
+      eqWeaponIcon.innerHTML = Items[w]?.icon ?? UNKNOWN_ICON;
       eqWeaponName.textContent = Items[w]?.name ?? w;
     } else {
-      eqWeaponIcon.textContent = "—";
+      eqWeaponIcon.textContent = "-";
       eqWeaponName.textContent = "Empty";
     }
 
     if (o){
-      eqOffhandIcon.textContent = Items[o]?.icon ?? "❔";
+      eqOffhandIcon.innerHTML = Items[o]?.icon ?? UNKNOWN_ICON;
       eqOffhandName.textContent = Items[o]?.name ?? o;
     } else {
-      eqOffhandIcon.textContent = "—";
+      eqOffhandIcon.textContent = "-";
       eqOffhandName.textContent = "Empty";
     }
 
@@ -1731,12 +1939,12 @@ if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCom
       slot.className="slot"+(s?"":" empty");
       slot.dataset.index=String(i);
       if (!s){
-        slot.innerHTML = `<div class="icon">·</div><div class="name">Empty</div>`;
+        slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
       } else {
         const item=Items[s.id];
         const qty = (s.qty|0) || 1;
         slot.innerHTML = `
-          <div class="icon">${item?.icon ?? "❔"}</div>
+          <div class="icon">${item?.icon ?? UNKNOWN_ICON}</div>
           <div class="name">${item?.name ?? s.id}</div>
           ${(item?.stack && qty>1) ? `<div class="qty">${qty}</div>` : ``}
         `;
@@ -2734,6 +2942,76 @@ function mobStepToward(mob, tx, ty){
   return false;
 }
 
+function findBestMeleeEngagePath(mob){
+  const adj = [[1,0],[-1,0],[0,1],[0,-1]]
+    .map(([dx,dy]) => ({ x: mob.x + dx, y: mob.y + dy }))
+    .filter(p => isWalkable(p.x, p.y));
+
+  if (!adj.length) return null;
+
+  let best = null;
+  for (const p of adj){
+    const path = astar(player.x, player.y, p.x, p.y);
+    if (!path) continue;
+    if (path.some(n => n.x === mob.x && n.y === mob.y)) continue;
+    if (!best || path.length < best.path.length){
+      best = { x: p.x, y: p.y, path };
+    }
+  }
+  return best;
+}
+
+function pushMobOffPlayerTile(mob){
+  if (!mob || !mob.alive) return false;
+  if (player.x !== mob.x || player.y !== mob.y) return false;
+  const dirs4 = [[1,0],[-1,0],[0,1],[0,-1]];
+  const dirs8 = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  const candidates = dirs4.concat(dirs8);
+
+  for (const [dx, dy] of candidates){
+    const nx = mob.x + dx, ny = mob.y + dy;
+    if (!mobTileWalkable(nx, ny)) continue;
+    if (nx === player.x && ny === player.y) continue;
+    if (mobs.some(o => o !== mob && o.alive && o.x===nx && o.y===ny)) continue;
+    mob.x = nx; mob.y = ny;
+    const c = tileCenter(nx, ny);
+    mob.px = c.cx; mob.py = c.cy;
+    return true;
+  }
+
+  // Fallback: if surrounded by mobs, still move off player even if it stacks with another mob.
+  for (const [dx, dy] of candidates){
+    const nx = mob.x + dx, ny = mob.y + dy;
+    if (!mobTileWalkable(nx, ny)) continue;
+    if (nx === player.x && ny === player.y) continue;
+    mob.x = nx; mob.y = ny;
+    const c = tileCenter(nx, ny);
+    mob.px = c.cx; mob.py = c.cy;
+    return true;
+  }
+
+  // Final fallback for boxed-in edge cases: snap back to home tile.
+  if (Number.isFinite(mob.homeX) && Number.isFinite(mob.homeY)){
+    const hx = mob.homeX|0, hy = mob.homeY|0;
+    if (mobTileWalkable(hx, hy) && !(hx === player.x && hy === player.y)){
+      mob.x = hx; mob.y = hy;
+      const c = tileCenter(hx, hy);
+      mob.px = c.cx; mob.py = c.cy;
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveMeleeTileOverlap(mob){
+  if (!mob || !mob.alive) return false;
+  if (player.x !== mob.x || player.y !== mob.y) return false;
+  if (pushMobOffPlayerTile(mob)) return true;
+
+  stopAction();
+  return true;
+}
+
 // death penalty + respawn (tweak as you like)
 function handlePlayerDeath(){
   const dx = player.x, dy = player.y;
@@ -2775,6 +3053,7 @@ function updateMobsAI(dt){
     if (!Number.isFinite(m.homeX) || !Number.isFinite(m.homeY)){
       m.homeX = m.x; m.homeY = m.y;
     }
+    if (!Number.isFinite(m.provokedUntil)) m.provokedUntil = 0;
     if (!Number.isFinite(m.aggroUntil)) m.aggroUntil = 0;
     if (!Number.isFinite(m.attackCooldownUntil)) m.attackCooldownUntil = 0;
     if (!Number.isFinite(m.moveCooldownUntil)) m.moveCooldownUntil = 0;
@@ -2786,13 +3065,14 @@ function updateMobsAI(dt){
     }
 
     const def = MOB_DEFS[m.type] ?? {};
+    const typeKey = String(m.type || "").toLowerCase();
     const aggroRange  = Number.isFinite(def.aggroRange) ? def.aggroRange : 4.0;
     const leash       = Number.isFinite(def.leash) ? def.leash : 7.0;
     const attackRange = Number.isFinite(def.attackRange) ? def.attackRange : 1.15;
     const atkSpeed    = Number.isFinite(def.attackSpeedMs) ? def.attackSpeedMs : 1300;
 
     // key change: passive mobs won’t aggro unless hit
-    const aggroOnSight = (def.aggroOnSight !== false);
+    const aggroOnSight = (typeKey === "rat") ? false : (def.aggroOnSight !== false);
 
     // smooth motion toward current tile center
     const moveSpeed = Number.isFinite(def.moveSpeed) ? def.moveSpeed : 140; // px/sec
@@ -2811,11 +3091,25 @@ function updateMobsAI(dt){
     const dFromHome      = tilesBetweenTiles(m.x, m.y, m.homeX, m.homeY);
     const dPlayerFromHome= tilesBetweenTiles(player.x, player.y, m.homeX, m.homeY);
 
-    const engaged = (m.target === "player" && t < m.aggroUntil);
+    const provoked = (t < m.provokedUntil);
+    const engaged = (m.target === "player" && t < m.aggroUntil && (aggroOnSight || provoked));
+    const playerTargetingThis = (player.target?.kind === "mob" && player.target.index === i);
 
-    // Acquire aggro (only if aggroOnSight === true)
+    // Only resolve overlap while this mob is actually in combat with the player.
+    if (m.x === player.x && m.y === player.y){
+      if (m.target === "player" || playerTargetingThis){
+        pushMobOffPlayerTile(m);
+        if (m.x === player.x && m.y === player.y){
+          m.target = null;
+          m.aggroUntil = 0;
+        }
+      }
+      continue;
+    }
+
+    // Acquire aggro from sight (aggressive mobs) or recent provocation (passive mobs).
     if (!engaged){
-      if (aggroOnSight && !playerSafe && dToPlayer <= aggroRange){
+      if ((aggroOnSight || provoked) && !playerSafe && dToPlayer <= aggroRange){
         m.target = "player";
         m.aggroUntil = t + 12000;
       } else if (dFromHome > 0.05){
@@ -2831,15 +3125,21 @@ function updateMobsAI(dt){
     // leash / safe-zone break
     if (playerSafe || dFromHome > leash || dPlayerFromHome > leash){
       m.target = null;
+      m.provokedUntil = 0;
       m.aggroUntil = 0;
       continue;
     }
 
     // keep aggro alive while nearby
-    if (dToPlayer <= aggroRange + 1.0) m.aggroUntil = t + 12000;
+    if (dToPlayer <= aggroRange + 1.0){
+      m.aggroUntil = t + 12000;
+      if (!aggroOnSight) m.provokedUntil = t + 12000;
+    }
+
+    const tileAdjacent = (Math.abs(player.x - m.x) <= 1 && Math.abs(player.y - m.y) <= 1);
 
     // Move into range
-    if (dToPlayer > attackRange){
+    if (dToPlayer > attackRange && !tileAdjacent){
       if (t >= m.moveCooldownUntil){
         m.moveCooldownUntil = t + 420;
         mobStepToward(m, player.x, player.y);
@@ -2850,6 +3150,8 @@ function updateMobsAI(dt){
     // Attack
     if (t < m.attackCooldownUntil) continue;
     m.attackCooldownUntil = t + atkSpeed;
+    // Brief post-swing pause so mobs don't immediately step again after attacking.
+    m.moveCooldownUntil = Math.max(m.moveCooldownUntil, t + Math.max(420, Math.floor(atkSpeed * 0.55)));
 
     const roll = rollMobAttack(m);
     if (roll.dmg <= 0){
@@ -2860,10 +3162,7 @@ function updateMobsAI(dt){
     player.hp = clamp(player.hp - roll.dmg, 0, player.maxHp);
     chatLine(`<span class="warn">${m.name} hits you for <b>${roll.dmg}</b>.</span>`);
 
-    // auto-retaliate if you aren't already targeting something
-    if (!player.target){
-      player.target = { kind:"mob", index: i };
-    }
+    // Do not auto-set a combat target here; it can cause involuntary movement.
   }
 }
 
@@ -3255,6 +3554,7 @@ if (t.kind === "fish"){
 
     const tNow = now();
 const style = getCombatStyle();
+if (style === "melee" && resolveMeleeTileOverlap(m)) return;
 const maxRangeTiles = (style === "melee") ? 1.15 : 5.0;
 const dTiles = tilesFromPlayerToTile(m.x, m.y);
 
@@ -3276,15 +3576,14 @@ const dTiles = tilesFromPlayerToTile(m.x, m.y);
         return;
       }
 
-      const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-        .map(([dx,dy])=>({x:m.x+dx,y:m.y+dy}))
-        .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction("No path to target.");
-      adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      if (!setPathTo(adj[0].x, adj[0].y)) return stopAction("No path to target.");
+      const best = findBestMeleeEngagePath(m);
+      if (!best) return stopAction("No path to target.");
+      player.path = best.path;
 return;
 
     }
+
+    if (style === "melee" && resolveMeleeTileOverlap(m)) return;
 
     player.facing.x = clamp(m.x - player.x, -1, 1);
     player.facing.y = clamp(m.y - player.y, -1, 1);
@@ -3302,6 +3601,7 @@ return;
 
 // engage mob so it can retaliate (safe even if you haven’t added AI yet)
 m.target = "player";
+m.provokedUntil = tNow + 15000;
 m.aggroUntil = tNow + 15000;
 
 const roll = rollPlayerAttack(style, m);
@@ -3346,6 +3646,11 @@ if (style === "magic"){
 
     if (m.hp <= 0){
       m.alive=false; m.respawnAt=now()+12000; m.hp=0;
+      m.target = null;
+      m.provokedUntil = 0;
+      m.aggroUntil = 0;
+      m.attackCooldownUntil = 0;
+      m.moveCooldownUntil = 0;
       chatLine(`<span class="good">You defeat the rat.</span>`);
       // Extra drop: raw rat meat
       if (Math.random() < 0.55){
@@ -3578,14 +3883,60 @@ if (item.ammo){
             ctx.fillRect(px+2,py+2,2,TILE-4);
             ctx.fillRect(px+TILE-4,py+2,2,TILE-4);
           } else {
-            ctx.fillStyle="#3a2f22";
+            const upT = (y>0) ? map[y-1][x] : -1;
+            const dnT = (y<H-1) ? map[y+1][x] : -1;
+            const lfT = (x>0) ? map[y][x-1] : -1;
+            const rtT = (x<W-1) ? map[y][x+1] : -1;
+            const up = upT===5, dn = dnT===5, lf = lfT===5, rt = rtT===5;
+            const vertical = up || dn;
+            const horizontal = lf || rt;
+
+            const base = ((x+y)%2===0) ? "#4b3928" : "#463523";
+            ctx.fillStyle=base;
             ctx.fillRect(px,py,TILE,TILE);
-            ctx.fillStyle="rgba(255,255,255,.10)";
-            if (n===1 || n===6) ctx.fillRect(px+10,py+12,3,3);
-            if (n===3 || n===8) ctx.fillRect(px+20,py+20,2,2);
-            ctx.fillStyle="rgba(0,0,0,.18)";
-            ctx.fillRect(px,py,TILE,2);
-            ctx.fillRect(px,py+TILE-2,TILE,2);
+
+            // Static soil grain (no time-based animation to avoid strobing).
+            if ((n%2)===0){
+              ctx.fillStyle="rgba(0,0,0,.07)";
+              ctx.fillRect(px+6,py+7,2,2);
+              ctx.fillRect(px+22,py+18,2,2);
+            }
+            if ((n%3)===1){
+              ctx.fillStyle="rgba(240,216,160,.09)";
+              ctx.fillRect(px+13,py+10,2,1);
+              ctx.fillRect(px+18,py+22,1,1);
+            }
+
+            // Soft boundary where grass starts so roads do not look grid-cut.
+            if (!up){
+              ctx.fillStyle = (upT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+              ctx.fillRect(px,py,TILE,2);
+            }
+            if (!dn){
+              ctx.fillStyle = (dnT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+              ctx.fillRect(px,py+TILE-2,TILE,2);
+            }
+            if (!lf){
+              ctx.fillStyle = (lfT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+              ctx.fillRect(px,py,2,TILE);
+            }
+            if (!rt){
+              ctx.fillStyle = (rtT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+              ctx.fillRect(px+TILE-2,py,2,TILE);
+            }
+
+            // Ruts make directionality feel less blocky.
+            ctx.fillStyle="rgba(23,15,10,.18)";
+            if (vertical && !horizontal){
+              ctx.fillRect(px+11,py+4,2,TILE-8);
+              ctx.fillRect(px+19,py+4,2,TILE-8);
+            } else if (horizontal && !vertical){
+              ctx.fillRect(px+4,py+11,TILE-8,2);
+              ctx.fillRect(px+4,py+19,TILE-8,2);
+            } else {
+              ctx.fillRect(px+11,py+11,2,2);
+              ctx.fillRect(px+19,py+19,2,2);
+            }
           }
         }
 
@@ -3871,10 +4222,23 @@ if (it.type === "vendor"){
   ctx.fill();
 
   ctx.fillStyle = "rgba(17,24,39,.95)";
-  ctx.font = "12px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText("🛒", 0, 1);
+  ctx.strokeStyle = "rgba(17,24,39,.95)";
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(-6, -4);
+  ctx.lineTo(-4, -2);
+  ctx.lineTo(4, -2);
+  ctx.lineTo(3, 3);
+  ctx.lineTo(-3, 3);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(-2, 5, 1.5, 0, Math.PI*2);
+  ctx.arc(2, 5, 1.5, 0, Math.PI*2);
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -4454,6 +4818,7 @@ function drawPlayerWeapon(cx, cy, fx, fy){
 
             // reset combat AI state on load
             target: null,
+            provokedUntil: 0,
             aggroUntil: 0,
             attackCooldownUntil: 0,
             moveCooldownUntil: 0,
@@ -4729,7 +5094,27 @@ manualDropLocks.clear();
       if (!r.alive && r.respawnAt && t>=r.respawnAt){ r.alive=true; r.respawnAt=0; }
     }
     for (const m of mobs){
-      if (!m.alive && m.respawnAt && t>=m.respawnAt){ m.alive=true; m.respawnAt=0; m.hp=m.maxHp; }
+      if (!m.alive && m.respawnAt && t>=m.respawnAt){
+        m.alive = true;
+        m.respawnAt = 0;
+        m.hp = m.maxHp;
+        m.target = null;
+        m.provokedUntil = 0;
+        m.aggroUntil = 0;
+        m.attackCooldownUntil = 0;
+        m.moveCooldownUntil = 0;
+      }
+    }
+
+    // Keep player tile clear of mobs at tick start.
+    for (let i=0; i<mobs.length; i++){
+      const m = mobs[i];
+      if (!m.alive) continue;
+      const playerTargetingThis = (player.target?.kind === "mob" && player.target.index === i);
+      const mobInCombat = (m.target === "player");
+      if (m.x === player.x && m.y === player.y && (mobInCombat || playerTargetingThis)){
+        pushMobOffPlayerTile(m);
+      }
     }
     // expire campfires
     for (let i=interactables.length-1; i>=0; i--){
@@ -4808,11 +5193,21 @@ if (windowsOpen.vendor && !availability.vendor){
       const {cx,cy}=tileCenter(next.x,next.y);
       const d=dist(player.px,player.py,cx,cy);
       if (d<1){
-        player.path.shift();
-        const dx = next.x - player.x;
-        const dy = next.y - player.y;
-        if (dx || dy){ player.facing.x=clamp(dx,-1,1); player.facing.y=clamp(dy,-1,1); }
-        player.x=next.x; player.y=next.y;
+        const meleeTarget = (
+          player.target?.kind === "mob" &&
+          getCombatStyle() === "melee"
+        ) ? mobs[player.target.index] : null;
+
+        if (meleeTarget?.alive && next.x === meleeTarget.x && next.y === meleeTarget.y){
+          // Combat-only safety net: never step onto your active melee target tile.
+          player.path = [];
+        } else {
+          player.path.shift();
+          const dx = next.x - player.x;
+          const dy = next.y - player.y;
+          if (dx || dy){ player.facing.x=clamp(dx,-1,1); player.facing.y=clamp(dy,-1,1); }
+          player.x=next.x; player.y=next.y;
+        }
       } else {
         const vx=(cx-player.px)/d;
         const vy=(cy-player.py)/d;

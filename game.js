@@ -1,8 +1,7 @@
-const prefersRootModules = /\.github\.io$/i.test(location.hostname);
+const isGitHubPagesHost = /\.github\.io$/i.test(location.hostname);
 const importWithFallback = (srcPath, rootPath) => {
-  const primary = prefersRootModules ? rootPath : srcPath;
-  const fallback = prefersRootModules ? srcPath : rootPath;
-  return import(primary).catch(() => import(fallback));
+  if (isGitHubPagesHost) return import(rootPath);
+  return import(srcPath).catch(() => import(rootPath));
 };
 
 (async () => {

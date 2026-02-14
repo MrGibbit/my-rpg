@@ -1,5 +1,9 @@
-const importWithFallback = (primary, fallback) =>
-  import(primary).catch(() => import(fallback));
+const prefersRootModules = /\.github\.io$/i.test(location.hostname);
+const importWithFallback = (srcPath, rootPath) => {
+  const primary = prefersRootModules ? rootPath : srcPath;
+  const fallback = prefersRootModules ? srcPath : rootPath;
+  return import(primary).catch(() => import(fallback));
+};
 
 (async () => {
   const { clamp, dist, now } = await importWithFallback("./src/utils.js", "./utils.js");

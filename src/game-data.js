@@ -56,8 +56,8 @@ export const MOB_DEFS = {
     levels: { accuracy: 17, power: 17, defense: 14, ranged: 1, sorcery: 1, health: 12 },
     aggroOnSight: true,
     moveSpeed: 132,
-    aggroRange: 6.0,
-    leash: 10.0,
+    aggroRange: 14.5,
+    leash: 14.5,
     attackRange: 1.2,
     attackSpeedMs: 1600,
     maxHit: 6

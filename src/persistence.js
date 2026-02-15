@@ -55,6 +55,7 @@ export function createPersistence(deps) {
   const DUNGEON_ZONE = "dungeon";
   const ZONE_ORDER = [OVERWORLD_ZONE, DUNGEON_ZONE];
   const DEFAULT_BANK_CAPACITY = Math.max(1, (BANK_START_SLOTS | 0) || 14);
+  const RESOURCE_LAYOUT_VERSION = 2;
 
   function getKnownZoneKeys() {
     if (typeof getZoneState !== "function") return [OVERWORLD_ZONE];
@@ -178,6 +179,7 @@ export function createPersistence(deps) {
 
     return JSON.stringify({
       v: 3,
+      resourceLayoutV: RESOURCE_LAYOUT_VERSION,
       savedAt,
       activeZone,
       player: {
@@ -338,15 +340,18 @@ export function createPersistence(deps) {
     }
   }
 
-  function restoreWorldForZone(zoneKey, zonePayload, t0) {
+  function restoreWorldForZone(zoneKey, zonePayload, t0, options = {}) {
     const runtime = getZoneRuntime(zoneKey);
     const worldPayload = zonePayload?.world;
+    const forceReseedResources = !!options.forceReseedResources;
 
     runtime.resources.length = 0;
     runtime.mobs.length = 0;
     runtime.interactables.length = 0;
 
-    if (Array.isArray(worldPayload?.resources)) {
+    if (zoneKey === OVERWORLD_ZONE && forceReseedResources) {
+      runInZone(zoneKey, () => seedResources());
+    } else if (Array.isArray(worldPayload?.resources)) {
       for (const r of worldPayload.resources) {
         if (!r) continue;
         runtime.resources.push({
@@ -502,6 +507,8 @@ export function createPersistence(deps) {
   function deserialize(str) {
     const data = JSON.parse(str);
     const t0 = now();
+    const savedResourceLayoutV = Number.isFinite(data?.resourceLayoutV) ? (data.resourceLayoutV | 0) : 0;
+    const forceOverworldResourceReseed = (savedResourceLayoutV !== RESOURCE_LAYOUT_VERSION);
 
     if (data?.player) {
       player.x = data.player.x | 0;
@@ -529,7 +536,9 @@ export function createPersistence(deps) {
 
     for (const zoneKey of getKnownZoneKeys()) {
       const zonePayload = zonesFromSave?.[zoneKey] ?? (zoneKey === OVERWORLD_ZONE ? legacyOverworldZone : null);
-      restoreWorldForZone(zoneKey, zonePayload, t0);
+      restoreWorldForZone(zoneKey, zonePayload, t0, {
+        forceReseedResources: (zoneKey === OVERWORLD_ZONE && forceOverworldResourceReseed)
+      });
     }
 
     const activeZone = normalizeZoneKey(data?.activeZone);

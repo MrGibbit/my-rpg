@@ -27,10 +27,10 @@ import { createPersistence } from "./src/persistence.js";
 import { createEntityLookup } from "./src/entity-lookup.js";
 import { createCombatRolls } from "./src/combat-rolls.js";
 import { createInteractionHelpers } from "./src/interaction-helpers.js";
-import { createCombatEffects } from "./src/combat-effects.js?v=firefx2";
+import { createCombatEffects } from "./src/combat-effects.js";
 import { createMobAI } from "./src/mob-ai.js";
-import { createFXRenderer } from "./src/fx-render.js?v=firefx2";
-import { createActionResolver } from "./src/action-resolver.js?v=firefx2";
+import { createFXRenderer } from "./src/fx-render.js";
+import { createActionResolver } from "./src/action-resolver.js";
 import { createMinimap } from "./src/minimap.js";
 import { createXPOrbs } from "./src/xp-orbs.js";
 

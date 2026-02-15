@@ -27,10 +27,10 @@ import { createPersistence } from "./src/persistence.js";
 import { createEntityLookup } from "./src/entity-lookup.js";
 import { createCombatRolls } from "./src/combat-rolls.js";
 import { createInteractionHelpers } from "./src/interaction-helpers.js";
-import { createCombatEffects } from "./src/combat-effects.js";
+import { createCombatEffects } from "./src/combat-effects.js?v=firefx2";
 import { createMobAI } from "./src/mob-ai.js";
-import { createFXRenderer } from "./src/fx-render.js";
-import { createActionResolver } from "./src/action-resolver.js";
+import { createFXRenderer } from "./src/fx-render.js?v=firefx2";
+import { createActionResolver } from "./src/action-resolver.js?v=firefx2";
 import { createMinimap } from "./src/minimap.js";
 import { createXPOrbs } from "./src/xp-orbs.js";
 
@@ -204,6 +204,14 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
       <rect x="7" y="1" width="2" height="1" fill="#f5f3ff"/>
       <rect x="6" y="5" width="1" height="1" fill="#fef3c7"/>
       <rect x="9" y="8" width="1" height="1" fill="#fde68a"/>
+    `,
+    fire_staff: `
+      <rect x="7" y="3" width="2" height="10" fill="#5b1b0f"/>
+      <rect x="6" y="2" width="4" height="2" fill="#d97706"/>
+      <rect x="6" y="1" width="4" height="1" fill="#f97316"/>
+      <rect x="7" y="0" width="2" height="1" fill="#fde68a"/>
+      <rect x="6" y="5" width="1" height="1" fill="#f59e0b"/>
+      <rect x="9" y="8" width="1" height="1" fill="#fb923c"/>
     `,
     axe: `
       <rect x="7" y="3" width="2" height="10" fill="#8b5a2b"/>
@@ -451,6 +459,7 @@ function levelStrokeForCls(cls){
     bronze_arrow:{ id:"bronze_arrow", name:"Bronze Arrow", stack:true, ammo:true, icon:icon("arrow", "#a76f2f", "#5f3a16", "#311d0a"), flatIcon:flatIcon("arrow") },
 
     staff: { id:"staff", name:"Wooden Staff", stack:false, icon:icon("staff", "#6b4ba3", "#3a2758", "#1f1430"), flatIcon:flatIcon("staff"), equipSlot:"weapon", combat:{ style:"magic", att:3, dmg:3 } },
+    fire_staff: { id:"fire_staff", name:"Fire Staff", stack:false, icon:icon("fire_staff", "#f97316", "#7c2d12", "#2f1307"), flatIcon:flatIcon("fire_staff"), equipSlot:"weapon", req:{ sorcery:10 }, combat:{ style:"magic", att:5, dmg:5 } },
 
     log:  { id:"log",  name:"Log",  stack:true, icon:icon("log", "#876239", "#4a321d", "#24160d"), flatIcon:flatIcon("log") },
     ore:  { id:"ore",  name:"Crude Ore",  stack:true, icon:icon("ore", "#6f7f90", "#3a4454", "#1e2430"), flatIcon:flatIcon("ore") },
@@ -808,6 +817,30 @@ function consumeFoodFromInv(invIndex){
     return it.equipSlot || null;
   }
 
+  function getEquipRequirements(id){
+    const req = Items[id]?.req;
+    if (!req || typeof req !== "object") return [];
+    const out = [];
+    for (const [skillKey, needRaw] of Object.entries(req)){
+      const need = Math.max(1, needRaw | 0);
+      const skillName = getSkillName(skillKey);
+      out.push({ skillKey, skillName, need });
+    }
+    return out;
+  }
+
+  function getEquipRequirementLine(id){
+    const reqs = getEquipRequirements(id);
+    if (!reqs.length) return "";
+    return `Req: ${reqs.map(r => `${r.skillName} ${r.need}`).join(" · ")}`;
+  }
+
+  function checkEquipRequirements(id){
+    const reqs = getEquipRequirements(id);
+    const missing = reqs.filter(r => levelFromXP(Skills[r.skillKey]?.xp ?? 0) < r.need);
+    return { ok: missing.length === 0, missing };
+  }
+
   function equipAmmoFromInv(invIndex, qty=null){
     const s = inv[invIndex];
     if (!s) return;
@@ -840,6 +873,13 @@ function consumeFoodFromInv(invIndex){
     const slot = canEquip(id);
     if (!slot){
       chatLine(`<span class="muted">You can't equip that.</span>`);
+      return;
+    }
+
+    const reqCheck = checkEquipRequirements(id);
+    if (!reqCheck.ok){
+      const r = reqCheck.missing[0];
+      chatLine(`<span class="warn">You need ${r.skillName} level ${r.need} to equip the ${Items[id]?.name ?? id}.</span>`);
       return;
     }
 
@@ -1724,6 +1764,30 @@ const BGM_KEY = "classic_bgm_v1";
     return dist(player.px, player.py, b.cx, b.cy) / TILE;
   }
 
+  function hasLineOfSightTiles(ax, ay, bx, by){
+    let x0 = ax | 0;
+    let y0 = ay | 0;
+    const x1 = bx | 0;
+    const y1 = by | 0;
+
+    let dx = Math.abs(x1 - x0);
+    let dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+
+    while (!(x0 === x1 && y0 === y1)){
+      const e2 = err * 2;
+      if (e2 > -dy){ err -= dy; x0 += sx; }
+      if (e2 < dx){ err += dx; y0 += sy; }
+
+      // Ignore destination tile (the target can occupy it); only blockers between tiles matter.
+      if (x0 === x1 && y0 === y1) return true;
+      if (!isWalkable(x0, y0)) return false;
+    }
+    return true;
+  }
+
   function getCombatStyle(){
     const w = equipment.weapon ? Items[equipment.weapon] : null;
     const explicit = w?.combat?.style;
@@ -1735,7 +1799,8 @@ const BGM_KEY = "classic_bgm_v1";
     return "melee";
   }
 
-  function findBestTileWithinRange(tx, ty, rangeTiles){
+  function findBestTileWithinRange(tx, ty, rangeTiles, options = {}){
+    const requireLineOfSight = !!options.requireLineOfSight;
     const r = Math.ceil(rangeTiles);
     const candidates = [];
 
@@ -1744,6 +1809,7 @@ const BGM_KEY = "classic_bgm_v1";
         const cx = tx + dx, cy = ty + dy;
         if (!isWalkable(cx, cy)) continue;
         if (tilesBetweenTiles(cx, cy, tx, ty) > rangeTiles) continue;
+        if (requireLineOfSight && !hasLineOfSightTiles(cx, cy, tx, ty)) continue;
         const h = Math.abs(cx - player.x) + Math.abs(cy - player.y);
         candidates.push({x:cx, y:cy, h});
       }
@@ -2019,15 +2085,16 @@ const BGM_KEY = "classic_bgm_v1";
 
   function getItemCombatStatText(id){
     const c = Items[id]?.combat;
-    if (!c) return "";
     const parts = [];
-    if (c.style && c.style !== "any"){
+    if (c?.style && c.style !== "any"){
       const style = String(c.style);
       parts.push(`Style: ${style[0].toUpperCase()}${style.slice(1)}`);
     }
-    if ((c.att|0) !== 0) parts.push(`+${c.att|0} ACC`);
-    if ((c.dmg|0) !== 0) parts.push(`+${c.dmg|0} DMG`);
-    if ((c.def|0) !== 0) parts.push(`+${c.def|0} DEF`);
+    if ((c?.att|0) !== 0) parts.push(`+${c.att|0} ACC`);
+    if ((c?.dmg|0) !== 0) parts.push(`+${c.dmg|0} DMG`);
+    if ((c?.def|0) !== 0) parts.push(`+${c.def|0} DEF`);
+    const reqLine = getEquipRequirementLine(id);
+    if (reqLine) parts.push(reqLine);
     return parts.join(" · ");
   }
 
@@ -4307,13 +4374,20 @@ player.invulnUntil = now() + 1200;
     tilesBetweenTiles,
     rollMobAttack,
     clamp,
-    getActiveZone
+    getActiveZone,
+    setOverworldZone: () => setCurrentZone(ZONE_KEYS.OVERWORLD, {
+      keepAction: true,
+      keepPath: true,
+      keepTarget: true,
+      syncCamera: false
+    })
   });
 
   const { updateFX, drawFX } = createFXRenderer({
     now,
     gatherParticles,
     combatFX,
+    equipment,
     clamp,
     ctx
   });
@@ -4350,6 +4424,7 @@ player.invulnUntil = now() + 1200;
     getCombatStyle,
     resolveMeleeTileOverlap,
     tilesFromPlayerToTile,
+    hasLineOfSightTiles,
     findBestTileWithinRange,
     findBestMeleeEngagePath,
     mobs,
@@ -4357,6 +4432,7 @@ player.invulnUntil = now() + 1200;
     rollPlayerAttack,
     spawnCombatFX,
     meleeState,
+    equipment,
     addGold,
     onUseLadder: useLadder
   }).ensureWalkIntoRangeAndAct;
@@ -6014,6 +6090,26 @@ function drawPlayerWeapon(cx, cy, fx, fy){
     ctx.fillRect(wx-1, wy-8, 2, 16);
   };
 
+  const drawFireStaff = () => {
+    // Darker shaft with ember tip so it reads differently from the wooden starter staff.
+    ctx.fillStyle = "#5b1b0f";
+    ctx.fillRect(wx-1, wy-8, 2, 16);
+
+    // Metal collar under the flame core.
+    ctx.fillStyle = "#d97706";
+    ctx.fillRect(wx-2, wy-9, 4, 2);
+
+    // Ember core + brighter inner glow.
+    ctx.fillStyle = "#f97316";
+    ctx.beginPath();
+    ctx.arc(wx, wy-11, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = "#fde68a";
+    ctx.beginPath();
+    ctx.arc(wx, wy-11, 1.5, 0, Math.PI*2);
+    ctx.fill();
+  };
+
   switch (weaponId){
     case "sword":
       drawSword({ blade: "#cbd5e1", guard: "#a16207", hilt: "#854d0e" });
@@ -6029,6 +6125,9 @@ function drawPlayerWeapon(cx, cy, fx, fy){
       return;
     case "staff":
       drawStaff({ orb: "#7c3aed", shaft: "#a16207" });
+      return;
+    case "fire_staff":
+      drawFireStaff();
       return;
   }
 

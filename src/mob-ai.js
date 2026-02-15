@@ -23,7 +23,8 @@ export function createMobAI(deps) {
     tilesBetweenTiles,
     rollMobAttack,
     clamp,
-    getActiveZone
+    getActiveZone,
+    setOverworldZone
   } = deps;
 
   function mobTileWalkable(nx, ny) {
@@ -34,6 +35,22 @@ export function createMobAI(deps) {
   }
 
   function mobStepToward(mob, tx, ty) {
+    // Prefer real pathfinding so mobs can route around blockers instead of
+    // getting stuck on corners (classic safespot behavior).
+    const path = astar(mob.x, mob.y, tx, ty);
+    if (Array.isArray(path) && path.length > 0) {
+      const next = path[0];
+      const nx = next.x | 0;
+      const ny = next.y | 0;
+      const adjacentStep = (Math.abs(nx - mob.x) + Math.abs(ny - mob.y)) === 1;
+      const occupiedByMob = mobs.some((o) => o !== mob && o.alive && o.x === nx && o.y === ny);
+      if (adjacentStep && mobTileWalkable(nx, ny) && !occupiedByMob && !(nx === player.x && ny === player.y)) {
+        mob.x = nx;
+        mob.y = ny;
+        return true;
+      }
+    }
+
     const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     const curH = Math.abs(tx - mob.x) + Math.abs(ty - mob.y);
     let best = null;
@@ -149,7 +166,11 @@ export function createMobAI(deps) {
       addGroundLoot(dx, dy, GOLD_ITEM_ID, lost);
     }
 
-    chatLine(`<span class="warn">You have died.</span>`);
+    chatLine(`<span class="warn"><b>You have died.</b></span>`);
+
+    if (typeof setOverworldZone === "function") {
+      setOverworldZone();
+    }
 
     player.hp = player.maxHp;
     player.x = startCastle.x0 + 6;
@@ -161,6 +182,7 @@ export function createMobAI(deps) {
     player.attackCooldownUntil = now() + 800;
     player.invulnUntil = now() + 2500;
     syncPlayerPix();
+    chatLine(`<span class="warn">Respawned at castle (${player.x}, ${player.y}).</span>`);
   }
 
   function updateMobsAI(dt) {

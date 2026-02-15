@@ -31,6 +31,7 @@ export function createActionResolver(deps) {
     getCombatStyle,
     resolveMeleeTileOverlap,
     tilesFromPlayerToTile,
+    hasLineOfSightTiles,
     findBestTileWithinRange,
     findBestMeleeEngagePath,
     mobs,
@@ -38,6 +39,7 @@ export function createActionResolver(deps) {
     rollPlayerAttack,
     spawnCombatFX,
     meleeState,
+    equipment,
     addGold,
     onUseLadder
   } = deps;
@@ -424,6 +426,8 @@ export function createActionResolver(deps) {
       if (style === "melee" && resolveMeleeTileOverlap(m)) return;
       const maxRangeTiles = (style === "melee") ? 1.15 : 5.0;
       const dTiles = tilesFromPlayerToTile(m.x, m.y);
+      const rangedOrMagic = (style !== "melee");
+      const clearShot = !rangedOrMagic || hasLineOfSightTiles(player.x, player.y, m.x, m.y);
 
       if (dTiles > maxRangeTiles) {
         if (tNow < (player._pathTryUntil || 0)) return;
@@ -435,7 +439,7 @@ export function createActionResolver(deps) {
             chatLine(`<span class="warn">Out of range (max 5).</span>`);
             player._lastRangeMsgAt = tNow2;
           }
-          const best = findBestTileWithinRange(m.x, m.y, 5.0);
+          const best = findBestTileWithinRange(m.x, m.y, 5.0, { requireLineOfSight: true });
           if (!best) return stopAction("No path to target.");
           player.path = best.path;
           return;
@@ -443,6 +447,22 @@ export function createActionResolver(deps) {
 
         const best = findBestMeleeEngagePath(m);
         if (!best) return stopAction("No path to target.");
+        player.path = best.path;
+        return;
+      }
+
+      if (rangedOrMagic && !clearShot) {
+        if (tNow < (player._pathTryUntil || 0)) return;
+        player._pathTryUntil = tNow + 200;
+
+        const tNow2 = now();
+        if (!player._lastRangeMsgAt || (tNow2 - player._lastRangeMsgAt) > 900) {
+          chatLine(`<span class="warn">No clear shot.</span>`);
+          player._lastRangeMsgAt = tNow2;
+        }
+
+        const best = findBestTileWithinRange(m.x, m.y, 5.0, { requireLineOfSight: true });
+        if (!best) return stopAction("No clear shot.");
         player.path = best.path;
         return;
       }
@@ -467,16 +487,23 @@ export function createActionResolver(deps) {
       m.aggroUntil = tNow + 15000;
 
       const roll = rollPlayerAttack(style, m);
+      const usingFireStaff = (equipment?.weapon === "fire_staff");
 
       if (style === "melee") spawnCombatFX("slash", m.x, m.y);
       if (style === "ranged") spawnCombatFX("arrow", m.x, m.y);
-      if (style === "magic") spawnCombatFX("bolt", m.x, m.y);
+      if (style === "magic") {
+        if (usingFireStaff) {
+          spawnCombatFX("fire_bolt", m.x, m.y);
+        } else {
+          spawnCombatFX("bolt", m.x, m.y);
+        }
+      }
 
       const mobName = (m.name || "creature").toLowerCase();
 
       if (!roll.hit || roll.dmg <= 0) {
         if (style === "magic") {
-          chatLine(`Your <b>Air Bolt</b> splashes harmlessly on the ${mobName}.`);
+          chatLine(`Your <b>${usingFireStaff ? "Fire Bolt" : "Air Bolt"}</b> splashes harmlessly on the ${mobName}.`);
         } else if (style === "ranged") {
           chatLine(`You shoot and miss the ${mobName}.`);
         } else {
@@ -499,7 +526,7 @@ export function createActionResolver(deps) {
       }
 
       if (style === "magic") {
-        chatLine(`You cast <b>Air Bolt</b> at the ${mobName} for <b>${dmg}</b>.`);
+        chatLine(`You cast <b>${usingFireStaff ? "Fire Bolt" : "Air Bolt"}</b> at the ${mobName} for <b>${dmg}</b>.`);
       } else if (style === "ranged") {
         chatLine(`You shoot the ${mobName} for <b>${dmg}</b>.`);
       } else {
@@ -563,6 +590,15 @@ export function createActionResolver(deps) {
             } else {
               addGroundLoot(m.x, m.y, "iron_ore", 1);
               chatLine(`<span class="warn">Inventory full: ${Items.iron_ore?.name ?? "iron ore"}</span>`);
+            }
+          }
+          if (Math.random() < 0.04) {
+            const got = addToInventory("fire_staff", 1);
+            if (got === 1) {
+              chatLine(`<span class="good">The skeleton drops a ${Items.fire_staff?.name ?? "Fire Staff"}!</span>`);
+            } else {
+              addGroundLoot(m.x, m.y, "fire_staff", 1);
+              chatLine(`<span class="warn">Inventory full: ${Items.fire_staff?.name ?? "Fire Staff"}</span>`);
             }
           }
           if (Math.random() < 0.75) {

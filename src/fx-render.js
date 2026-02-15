@@ -1,5 +1,5 @@
 export function createFXRenderer(deps) {
-  const { now, gatherParticles, combatFX, clamp, ctx } = deps;
+  const { now, gatherParticles, combatFX, equipment, clamp, ctx } = deps;
 
   function updateFX() {
     const t = now();
@@ -59,7 +59,7 @@ export function createFXRenderer(deps) {
         ctx.lineWidth = 1;
       }
 
-      if (fx.kind === "arrow" || fx.kind === "bolt") {
+      if (fx.kind === "arrow" || fx.kind === "bolt" || fx.kind === "fire_bolt") {
         const p = age;
         const x = fx.x0 + (fx.x1 - fx.x0) * p;
         const y = fx.y0 + (fx.y1 - fx.y0) * p;
@@ -87,7 +87,7 @@ export function createFXRenderer(deps) {
           ctx.closePath();
           ctx.fill();
           ctx.lineWidth = 1;
-        } else {
+        } else if (fx.kind === "bolt" && fx.variant !== "fire" && equipment?.weapon !== "fire_staff") {
           ctx.strokeStyle = `rgba(34, 211, 238, ${0.85 * a})`;
           ctx.lineWidth = 3;
           ctx.beginPath();
@@ -103,6 +103,64 @@ export function createFXRenderer(deps) {
           ctx.moveTo(-8, 3);
           ctx.lineTo(6, 3);
           ctx.stroke();
+          ctx.lineWidth = 1;
+        } else {
+          // Fire-staff projectile: flame comet with a pulsing core.
+          const pulse = 1 + 0.18 * Math.sin(age * 20);
+          const glowR = 6.2 * pulse;
+          const coreR = 2.4 * pulse;
+
+          // Smoke-dark outer trail.
+          ctx.strokeStyle = `rgba(35, 12, 4, ${0.55 * a})`;
+          ctx.lineWidth = 7;
+          ctx.beginPath();
+          ctx.moveTo(-12, 0);
+          ctx.lineTo(-1, 0);
+          ctx.stroke();
+
+          // Main orange trail.
+          ctx.strokeStyle = `rgba(249, 115, 22, ${0.92 * a})`;
+          ctx.lineWidth = 4.5;
+          ctx.beginPath();
+          ctx.moveTo(-11, 0);
+          ctx.lineTo(0, 0);
+          ctx.stroke();
+
+          // Hot inner trail.
+          ctx.strokeStyle = `rgba(251, 191, 36, ${0.90 * a})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-9, 0);
+          ctx.lineTo(0.5, 0);
+          ctx.stroke();
+
+          // Flame head (teardrop-ish).
+          ctx.fillStyle = `rgba(249, 115, 22, ${0.95 * a})`;
+          ctx.beginPath();
+          ctx.moveTo(4.6, 0);
+          ctx.lineTo(0.5, -3.6);
+          ctx.lineTo(-1.5, -1.2);
+          ctx.lineTo(-1.5, 1.2);
+          ctx.lineTo(0.5, 3.6);
+          ctx.closePath();
+          ctx.fill();
+
+          // Glow shell.
+          ctx.fillStyle = `rgba(249, 115, 22, ${0.40 * a})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, glowR, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Bright core.
+          ctx.fillStyle = `rgba(255, 243, 214, ${0.98 * a})`;
+          ctx.beginPath();
+          ctx.arc(0.8, 0, coreR, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Tiny embers to sell "fire" vs regular magic.
+          ctx.fillStyle = `rgba(253, 186, 116, ${0.85 * a})`;
+          ctx.fillRect(-4.5, -2.2, 1.4, 1.4);
+          ctx.fillRect(-6.2, 1.1, 1.2, 1.2);
           ctx.lineWidth = 1;
         }
         ctx.restore();

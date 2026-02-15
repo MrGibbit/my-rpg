@@ -22,7 +22,7 @@ export function createCombatEffects(deps) {
     }
   }
 
-  function spawnCombatFX(kind, tx, ty) {
+  function spawnCombatFX(kind, tx, ty, options = {}) {
     const a = { x: player.px, y: player.py };
     const b = tileCenter(tx, ty);
     if (kind === "slash") {
@@ -42,6 +42,16 @@ export function createCombatEffects(deps) {
         life: 320
       });
     } else if (kind === "bolt") {
+      const variant = (typeof options?.variant === "string") ? options.variant : "";
+      combatFX.push({
+        kind,
+        variant,
+        x0: a.x, y0: a.y,
+        x1: b.cx, y1: b.cy,
+        born: now(),
+        life: 300
+      });
+    } else if (kind === "fire_bolt") {
       combatFX.push({
         kind,
         x0: a.x, y0: a.y,

@@ -1,0 +1,13 @@
+{
+  "name": "classic-rpg",
+  "private": true,
+  "version": "0.4.4-dev",
+  "scripts": {
+    "dev": "node scripts/static-server.mjs --port 8000",
+    "smoke": "playwright test",
+    "smoke:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

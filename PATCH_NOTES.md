@@ -3,96 +3,119 @@
 Use this file as the live notes while building.
 
 ## Current (Unreleased)
-- Version: `v0.4.3`
-- Date: `February 14, 2026`
+- Version: `v0.4.4`
+- Date: `February 15, 2026`
 
-### Discord Copy (Paste This)
 ```md
-**Classic RPG - v0.4.3 Update (Today Recap)**
+**Classic RPG - v0.4.4 Update (Draft)**
 
-**Content + UI (from today)**
-- Full UI icon pass: replaced emoji iconography with handcrafted SVG icon art.
-- Skills panel readability pass (larger icons), including Sorcery wizard-hat icon.
-- Naming cleanup: `Woodcut` -> `Woodcutting`.
-- Starter castle visual pass with expanded interior/exterior decor details.
-- Added a dedicated vendor shop building and environment dressing.
-- Moved the vendor NPC into the new shop location.
-- Rat enemy visual refresh with a more detailed sprite pass (layered body/head, shading, whiskers, motion, and facing).
-- Equipment tab now includes a dedicated Quiver slot with live arrow icon/count display.
+**Combat + Gear Stats**
+- Added item combat stats on equipment (`style`, `att`, `dmg`, `def`).
+- Equipped weapon/offhand stats now affect live combat calculations.
+- Added per-item stat values for current gear:
+  - `sword`, `bow`, `staff`: +ACC/+DMG on their matching style.
+  - `crude_sword`, `crude_dagger`: lower-tier melee +ACC/+DMG.
+  - `shield`, `crude_shield`: defensive bonuses.
+- Combat skill routing now follows:
+  - Melee: Accuracy = hit chance, Power = damage.
+  - Ranged: Ranged = hit chance + damage.
+  - Sorcery: Sorcery = hit chance + damage.
+- Shield defense now contributes to reducing enemy hit chance.
+- Combat style now respects weapon-declared style first, with legacy class fallback if none is set.
 
-**World + Encounters (from today)**
-- Added goblins as a new enemy encounter.
-- Rat spawn distribution reworked for more natural spacing (less uniform spread).
-- Rats now form a stronger starter training cluster while still keeping a small number of natural strays.
-- Rat training packs are now positioned south of the river.
-- All rat spawn top-offs/outskirts are constrained south of the river, replacing prior one-off manual placement tweaks.
+**Equipment + Character Visuals**
+- Player weapon in-hand now matches the actually equipped weapon item.
+- Added in-hand offhand shield rendering when a shield is equipped.
+- Added distinct world visuals for:
+  - `shield` vs `crude_shield`
+  - `sword`, `crude_sword`, `crude_dagger`, `bow`, `staff`
+- No weapon/offhand visual is shown when the slot is empty.
 
-**Combat + Progression (from today)**
-- Combat level now derived from core combat skills and shown in HUD + Skills panel.
-- Melee training selector now routes melee XP to Accuracy / Power / Defense.
-- XP routing by style clarified (Melee, Ranged, Sorcery) with Health XP integration.
-- Enemy attack context menu entries now use level-difference coloring for clarity.
-- Save migration compatibility added for legacy `combat` XP data.
+**Action Animation Pass**
+- Added smithing animation (hammer swing + impact sparks/glow).
+- Added smelting animation (ore toss + heat/embers).
+- Added active station feedback on furnace/anvil while crafting.
+- Equipped hand gear hides while smith/smelt/woodcut/mine action tool animations are playing.
 
-**Inventory + Ammo (from today)**
+**Smithing**
+- Added a full smithing loop: smelt `ore` into `crude_bar` at furnace, then forge gear at anvil.
+- Smithing now uses hammer + anvil requirements and checks station proximity before opening/using the smithing window.
+- Added starter `crude_bar` recipes:
+  - `crude_dagger` (1 bar, Lv 1)
+  - `crude_sword` (2 bars, Lv 1)
+  - `crude_shield` (2 bars, Lv 2)
+- Smelting and forging both grant Smithing XP and progress the skill normally.
+- If inventory is full during smelt/forge output, crafted items/materials drop to ground instead of being lost.
+
+**Inventory / Equipment UX**
+- Left-click in inventory now equips weapons.
+- Left-click in inventory now equips any equippable item (weapon/offhand/armor-ready).
+- Inventory and bank now use flat item art (no per-item square icon background).
+- Inventory/bank slots remain boxed-in; only icon art background was flattened.
+- Added custom in-game hover tooltips for Inventory, Bank, and Equipment slots.
+- Added combat-stat tooltip lines on item hover.
+- Equipment panel icons now match inventory icon style.
+- Tooltip label update: `+ATK` -> `+ACC`.
+- Raised tooltip z-layer above windows so it always appears in front.
+- Equipment slot tooltips include item stats and unequip hint text.
+
+**World + Encounter Baseline (v0.4.3 carryover)**
+- Added goblins as an additional enemy encounter type.
+- Rat enemy visuals received a detailed sprite refresh pass.
+- Rat spawn distribution was reworked for more natural spacing.
+- Starter rat training cluster was strengthened while keeping a small number of natural strays.
+- Rat training packs/top-offs were constrained south of the river for clearer early-game routing.
+
+**Quiver + Ammo Baseline (v0.4.3 carryover)**
+- Equipment tab includes a dedicated Quiver slot with live arrow icon/count display.
 - Added quiver right-click actions to move arrows to inventory (`1`, `10`, `X`, `All`).
 - Arrows moved into inventory now stack in one slot (RuneScape-style behavior).
-- Arrow stacks in inventory can now be equipped directly back into quiver.
-- Fixed stack quantity handling for arrow drop/deposit/sell flows.
-- Save/load now preserves arrows intentionally stored in inventory.
+- Arrow stacks in inventory can be equipped directly back into quiver.
+- Stack quantity handling was corrected for arrow drop/deposit/sell flows.
+- Save/load preserves arrows intentionally stored in inventory.
 
-**Technical / Stability**
-- Fixed GitHub Pages module 404 issues.
+**World Art + Vendor Baseline (v0.4.3 carryover)**
+- Added starter castle visual pass with expanded interior/exterior decor details.
+- Added a dedicated vendor shop building and environment dressing.
+- Moved the vendor NPC into the new shop location.
+
+**Technical + Deployment Stability (v0.4.3 carryover)**
+- Fixed GitHub Pages module 404 loading issues.
 - Added GitHub Pages base-path handling in `index.html` for project-site path safety.
-- Refactored module imports back to canonical `src/` layout in `game.js`.
-- Added import path validation script to prevent broken relative imports.
-- Added GitHub Actions validation on push/PR for import targets.
+- Standardized `game.js` module imports back to canonical `src/` paths.
+- Added import path validation script and GitHub Actions validation on push/PR.
 - Updated cache-bust versions to force fresh client asset loads after deploy.
 
-If you still see old behavior after deploy, hard refresh once (Ctrl+F5).
+**Zone Framework (Dungeon Prep)**
+- Added active-zone plumbing (`overworld` / `dungeon`) in state.
+- Core world collections (`map`, `resources`, `mobs`, `interactables`, `groundLoot`, `manualDropLocks`) now resolve from the current zone.
+- Added zone-aware navigation rebuild hooks so pathfinding can swap with zone changes.
+- Save format bumped to `v3` with `activeZone` plus per-zone world snapshots.
+- Added backward-compatible load handling for legacy saves without zone data.
+
+**Gameplay Test Shell**
+- Added `?test=1` boot mode to skip overlays for quick iteration.
+- Added `window.__classicRpg` debug API for scripted checks (zone switch, teleport, save/load, tick).
+- Expanded debug API with ladder/test helpers (`getLadders`, `interactTile`, `useLadder`) for automated interaction checks.
+- Added local dev server script (`npm run dev`) and Playwright smoke test scaffold (`npm run smoke`).
+
+**Dungeon Ladder Vertical Slice**
+- Added an overworld `Ladder Down` and a dungeon `Ladder Up` return point.
+- Added climb interactions (`Climb Down` / `Climb Up`) with zone transitions.
+- Added a starter dungeon room mob pack for early combat testing.
+- Added ladder visuals, examine text, and context-menu actions.
+- Updated smoke coverage to verify ladder-based zone transitions.
+- Expanded the dungeon from a single room into a multi-room layout with corridors and a lower hall.
+- Added dungeon-specific tile rendering, torches, pillars, debris, and a pit-bridge section to give the area a distinct look.
+- Overworld castle/shop decor now renders only in overworld (no decor bleed into dungeon zone).
+- Moved the surface dungeon entrance ladder to tile `(17,4)` for easier access.
+- Updated dungeon default mob spawns so rats/goblin appear in the chamber next to the ladder room.
+- Added migration for legacy dungeon default mob layouts so older character saves update to current spawn positions.
+- Added dungeon idle roaming for rats/goblins so they no longer stay pinned to exact spawn tiles after load.
 ```
 
-### Full Session Changelog (Today)
-- Released/assembled `v0.4.0` feature set:
-- Combat level calculation and visibility improvements.
-- Melee XP training selector and explicit style-based XP routing.
-- UI/visual icon overhaul from emoji to custom SVGs.
-- Castle visual/decor overhaul pass for stronger world readability.
-- Added a dedicated vendor shop area and relocated the vendor NPC into it.
-- Rat enemy visual upgrade with improved readability/animation.
-- Added goblins as an additional enemy type for world combat encounters.
-- Skills label/naming consistency updates and runtime mapping support.
-- Save compatibility migration handling for older combat XP format.
-- Rat spawn system pass:
-- Added clustered starter training packs with natural spacing variance.
-- Kept a small number of outskirts rats so world encounters remain organic.
-- Constrained rat spawning to south-of-river regions for clearer early routing.
-- Removed brittle one-off rat coordinate relocation in favor of procedural placement rules.
-- Investigated live GitHub Pages loading failures at:
-- `https://mrgibbit.github.io/Gibbits-rpg/`
-- Diagnosed module resolution problem (`/src/*.js` requests returning 404 on deployed structure).
-- Implemented and iterated deployment-safe loading fixes.
-- Refactored back to clean canonical imports in `game.js`:
-- `./src/utils.js`
-- `./src/config.js`
-- `./src/skills.js`
-- `./src/navigation.js`
-- `./src/state.js`
-- Added `.github/scripts/validate-imports.ps1`:
-- Scans `game.js` and `src/*.js` for relative imports.
-- Fails when any referenced module file is missing.
-- Added `.github/workflows/validate-imports.yml`:
-- Runs import validation on `push` to `main` and on `pull_request`.
-- Updated docs:
-- `README.md` module layout safety section.
-- `README.md` patch notes workflow section.
-- Added `PATCH_NOTES.md` to maintain Discord-ready notes continuously.
-- Added equipment-panel quiver slot with visible arrow stack count.
-- Added quiver context actions to move arrows into inventory.
-- Implemented RuneScape-style arrow stacking when arrows are in inventory.
-- Added equip-from-inventory for arrow stacks (moves back to quiver).
-- Corrected stack-aware behavior for arrow drop/deposit/sell actions.
-- Preserved inventory-stored arrows through save/load.
+## Posted
+- `v0.4.3` has already been posted.
 
 ### Internal Notes
 - Keep this section updated as work happens.

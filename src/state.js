@@ -3,32 +3,129 @@ import { W, H, RIVER_Y, ZOOM_DEFAULT } from "./config.js";
 export const camera = { x: 0, y: 0 };
 export const view = { zoom: ZOOM_DEFAULT };
 
-// ---------- Map ----------
+export const ZONE_KEYS = Object.freeze({
+  OVERWORLD: "overworld",
+  DUNGEON: "dungeon"
+});
+
+function makeTileMap(fill = 0) {
+  return Array.from({ length: H }, () => Array.from({ length: W }, () => fill));
+}
+
+function makeZoneWorld(fill = 0) {
+  return {
+    width: W,
+    height: H,
+    map: makeTileMap(fill),
+    resources: [],
+    mobs: [],
+    interactables: [],
+    groundLoot: new Map(),
+    manualDropLocks: new Map()
+  };
+}
+
+const zoneWorlds = {
+  [ZONE_KEYS.OVERWORLD]: makeZoneWorld(0),
+  [ZONE_KEYS.DUNGEON]: makeZoneWorld(4)
+};
+
+let activeZone = ZONE_KEYS.OVERWORLD;
+
+function normalizeZoneKey(zoneKey) {
+  if (zoneKey === ZONE_KEYS.OVERWORLD || zoneKey === ZONE_KEYS.DUNGEON) return zoneKey;
+  return ZONE_KEYS.OVERWORLD;
+}
+
+function getZoneWorld(zoneKey = activeZone) {
+  const key = normalizeZoneKey(zoneKey);
+  return zoneWorlds[key] ?? zoneWorlds[ZONE_KEYS.OVERWORLD];
+}
+
+function bindToCollection(value, collection) {
+  return (typeof value === "function") ? value.bind(collection) : value;
+}
+
+function makeArrayProxy(selectArray) {
+  return new Proxy([], {
+    get(_target, prop) {
+      const arr = selectArray();
+      return bindToCollection(arr[prop], arr);
+    },
+    set(_target, prop, value) {
+      selectArray()[prop] = value;
+      return true;
+    },
+    has(_target, prop) {
+      return prop in selectArray();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(selectArray());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      return Object.getOwnPropertyDescriptor(selectArray(), prop);
+    },
+    deleteProperty(_target, prop) {
+      return delete selectArray()[prop];
+    }
+  });
+}
+
+function makeMapProxy(selectMap) {
+  return new Proxy(new Map(), {
+    get(_target, prop) {
+      const m = selectMap();
+      return bindToCollection(m[prop], m);
+    },
+    set(_target, prop, value) {
+      selectMap()[prop] = value;
+      return true;
+    },
+    has(_target, prop) {
+      return prop in selectMap();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(selectMap());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      return Object.getOwnPropertyDescriptor(selectMap(), prop);
+    }
+  });
+}
+
+// ---------- Overworld map ----------
 // 0 grass (walkable), 1 water (blocked), 2 cliff (blocked), 3 stone floor (walkable), 4 wall (blocked), 5 path/bridge (walkable)
-export const map = Array.from({ length: H }, () => Array.from({ length: W }, () => 0));
+const overworldMap = zoneWorlds[ZONE_KEYS.OVERWORLD].map;
 
-for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) map[y][x] = 0;
+for (let y = 0; y < H; y++) {
+  for (let x = 0; x < W; x++) {
+    overworldMap[y][x] = 0;
+  }
+}
 
-for (let x = 2; x < W - 2; x++) { map[RIVER_Y][x] = 1; map[RIVER_Y + 1][x] = 1; }
+for (let x = 2; x < W - 2; x++) {
+  overworldMap[RIVER_Y][x] = 1;
+  overworldMap[RIVER_Y + 1][x] = 1;
+}
 
-function stampCastle(x0, y0, w, h) {
+function stampCastle(tileMap, x0, y0, w, h) {
   for (let y = y0; y < y0 + h; y++) {
     for (let x = x0; x < x0 + w; x++) {
       const edge = (x === x0 || x === x0 + w - 1 || y === y0 || y === y0 + h - 1);
-      map[y][x] = edge ? 4 : 3;
+      tileMap[y][x] = edge ? 4 : 3;
     }
   }
   const gateX = x0 + Math.floor(w / 2);
   const gateY = y0 + h - 1;
-  map[gateY][gateX] = 5;
-  map[gateY + 1][gateX] = 5;
-  map[gateY + 2][gateX] = 5;
+  tileMap[gateY][gateX] = 5;
+  tileMap[gateY + 1][gateX] = 5;
+  tileMap[gateY + 2][gateX] = 5;
   return { gateX, gateY, x0, y0, w, h };
 }
 
-export const startCastle = stampCastle(2, 2, 12, 8);
-export const vendorShop = stampCastle(16, 3, 8, 6);
-export const southKeep = stampCastle(44, 30, 12, 8);
+export const startCastle = stampCastle(overworldMap, 2, 2, 12, 8);
+export const vendorShop = stampCastle(overworldMap, 16, 3, 8, 6);
+export const southKeep = stampCastle(overworldMap, 44, 30, 12, 8);
 
 function hash01(x, y, seed = 0) {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(seed | 0, 2147483647);
@@ -38,20 +135,20 @@ function hash01(x, y, seed = 0) {
   return (h >>> 0) / 4294967295;
 }
 
-function paintPath(x, y) {
+function paintPath(tileMap, x, y) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
-  const t = map[y][x];
-  if (t === 0 || t === 5) map[y][x] = 5;
+  const t = tileMap[y][x];
+  if (t === 0 || t === 5) tileMap[y][x] = 5;
 }
 
-function carvePathSegment(x0, y0, x1, y1, seed) {
+function carvePathSegment(tileMap, x0, y0, x1, y1, seed) {
   let x = x0 | 0;
   let y = y0 | 0;
   let step = 0;
   let lastAxis = 0; // 1 = x, 2 = y
 
   while (true) {
-    paintPath(x, y);
+    paintPath(tileMap, x, y);
 
     if (x === x1 && y === y1) break;
 
@@ -60,19 +157,17 @@ function carvePathSegment(x0, y0, x1, y1, seed) {
     const ax = Math.abs(dx);
     const ay = Math.abs(dy);
 
-    // Very light width variation so roads remain mostly straight/readable.
     if (hash01(x, y, seed + 17 + step) < 0.03) {
       if (ax >= ay) {
         const sideY = hash01(x, y, seed + 23 + step) < 0.5 ? -1 : 1;
-        paintPath(x, y + sideY);
+        paintPath(tileMap, x, y + sideY);
       } else {
         const sideX = hash01(x, y, seed + 29 + step) < 0.5 ? -1 : 1;
-        paintPath(x + sideX, y);
+        paintPath(tileMap, x + sideX, y);
       }
     }
 
     if (ax && ay) {
-      // Strongly bias toward the dominant axis to reduce zig-zag.
       const r = hash01(x, y, seed + step);
       let pickX;
       if (ax > ay) pickX = (r < 0.92);
@@ -101,11 +196,11 @@ function carvePathSegment(x0, y0, x1, y1, seed) {
   }
 }
 
-function carvePathPolyline(points, seed) {
+function carvePathPolyline(tileMap, points, seed) {
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1];
     const b = points[i];
-    carvePathSegment(a.x, a.y, b.x, b.y, seed + i * 97);
+    carvePathSegment(tileMap, a.x, a.y, b.x, b.y, seed + i * 97);
   }
 }
 
@@ -113,58 +208,101 @@ const northGate = { x: startCastle.gateX, y: startCastle.gateY };
 const shopGate = { x: vendorShop.gateX, y: vendorShop.gateY + 2 };
 const southGate = { x: southKeep.gateX, y: southKeep.gateY + 2 };
 
-// Starter castle -> vendor shop walkway.
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: northGate.x, y: northGate.y + 1 },
   { x: shopGate.x, y: shopGate.y }
 ], 19);
 
-// Starter castle -> north bridge approach.
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: northGate.x, y: northGate.y },
   { x: 8, y: RIVER_Y - 1 }
 ], 11);
 
-// North main road (mostly straight with a gentle bend near the bridge approach).
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: 8, y: RIVER_Y - 1 },
   { x: 14, y: RIVER_Y - 2 },
   { x: 36, y: RIVER_Y - 2 },
   { x: 42, y: RIVER_Y - 3 }
 ], 29);
 
-// North road -> south bridge approach.
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: 42, y: RIVER_Y - 3 },
   { x: 42, y: RIVER_Y - 1 }
 ], 47);
 
-// South bridge -> south keep road.
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: 42, y: RIVER_Y + 2 },
   { x: 42, y: southGate.y - 2 },
   { x: 43, y: southGate.y - 1 },
   { x: 42, y: southGate.y }
 ], 71);
 
-// South keep approach.
-carvePathPolyline([
+carvePathPolyline(overworldMap, [
   { x: 42, y: southGate.y },
   { x: 49, y: southGate.y },
   { x: southGate.x, y: southGate.y }
 ], 89);
 
-// Fixed single-width bridge lanes over water.
 for (const bx of [8, 42]) {
-  map[RIVER_Y][bx] = 5;
-  map[RIVER_Y + 1][bx] = 5;
+  overworldMap[RIVER_Y][bx] = 5;
+  overworldMap[RIVER_Y + 1][bx] = 5;
 }
 
-// Extra tie-in tiles around each bridge mouth.
 for (const bx of [8, 42]) {
-  paintPath(bx, RIVER_Y - 1);
-  paintPath(bx, RIVER_Y + 2);
+  paintPath(overworldMap, bx, RIVER_Y - 1);
+  paintPath(overworldMap, bx, RIVER_Y + 2);
 }
+
+function buildDungeonTemplate() {
+  const dMap = zoneWorlds[ZONE_KEYS.DUNGEON].map;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) dMap[y][x] = 4;
+  }
+
+  function carveRect(x0, y0, x1, y1, tile = 3) {
+    const ax0 = Math.max(0, Math.min(x0, x1));
+    const ay0 = Math.max(0, Math.min(y0, y1));
+    const ax1 = Math.min(W - 1, Math.max(x0, x1));
+    const ay1 = Math.min(H - 1, Math.max(y0, y1));
+    for (let y = ay0; y <= ay1; y++) {
+      for (let x = ax0; x <= ax1; x++) dMap[y][x] = tile;
+    }
+  }
+
+  // Entry room (ladder-up zone).
+  carveRect(6, 7, 14, 14, 3);
+
+  // Main east corridor.
+  carveRect(15, 10, 22, 11, 3);
+
+  // Mid chamber.
+  carveRect(23, 6, 34, 16, 3);
+
+  // Bridge over a small pit in the mid chamber.
+  carveRect(27, 10, 29, 12, 1);
+  carveRect(28, 10, 28, 12, 5);
+
+  // South descent corridor.
+  carveRect(28, 17, 29, 24, 3);
+
+  // Lower hall.
+  carveRect(22, 25, 35, 34, 3);
+
+  // Side alcove.
+  carveRect(17, 27, 21, 31, 3);
+  carveRect(21, 28, 22, 29, 3);
+
+  // Small northern crypt nook.
+  carveRect(26, 3, 31, 5, 3);
+
+  // Rubble blockers for visual variety.
+  carveRect(24, 30, 25, 31, 2);
+  carveRect(32, 27, 33, 28, 2);
+}
+
+buildDungeonTemplate();
+
+export const map = makeArrayProxy(() => getZoneWorld().map);
 
 // ---------- Skills ----------
 export const Skills = {
@@ -177,6 +315,7 @@ export const Skills = {
   fletching: { name: "Fletching", xp: 0 },
   woodcutting: { name: "Woodcutting", xp: 0 },
   mining: { name: "Mining", xp: 0 },
+  smithing: { name: "Smithing", xp: 0 },
   fishing: { name: "Fishing", xp: 0 },
   firemaking: { name: "Firemaking", xp: 0 },
   cooking: { name: "Cooking", xp: 0 },
@@ -203,8 +342,8 @@ export const quiver = {
 };
 
 // ---------- Ground loot ----------
-export const groundLoot = new Map();
-export const manualDropLocks = new Map();
+export const groundLoot = makeMapProxy(() => getZoneWorld().groundLoot);
+export const manualDropLocks = makeMapProxy(() => getZoneWorld().manualDropLocks);
 export const lootUi = {
   lastInvFullMsgAt: 0,
   lastInvFullMsgItem: null
@@ -222,19 +361,44 @@ export const meleeState = {
 };
 
 // ---------- Entities ----------
-export const resources = [];
-export const mobs = [];
-export const interactables = [];
+export const resources = makeArrayProxy(() => getZoneWorld().resources);
+export const mobs = makeArrayProxy(() => getZoneWorld().mobs);
+export const interactables = makeArrayProxy(() => getZoneWorld().interactables);
 
 // ---------- Persistent world seed ----------
 export const worldState = {
-  seed: 1337
+  seed: 1337,
+  activeZone: activeZone
 };
+
+export function getActiveZone() {
+  const key = normalizeZoneKey(worldState.activeZone);
+  if (key !== activeZone) activeZone = key;
+  return activeZone;
+}
+
+export function setActiveZone(zoneKey) {
+  const next = normalizeZoneKey(zoneKey);
+  if (!zoneWorlds[next]) return false;
+  activeZone = next;
+  worldState.activeZone = next;
+  return true;
+}
+
+export function getZoneState(zoneKey = activeZone) {
+  return getZoneWorld(zoneKey);
+}
+
+export function getZoneDimensions(zoneKey = activeZone) {
+  const zone = getZoneWorld(zoneKey);
+  return { width: zone.width, height: zone.height };
+}
 
 // ---------- UI state ----------
 export const availability = {
   bank: false,
   vendor: false,
+  smithing: false,
   vendorInRangeIndex: -1,
   vendorTab: "buy"
 };
@@ -245,6 +409,7 @@ export const windowsOpen = {
   equipment: false,
   skills: false,
   bank: false,
+  smithing: false,
   settings: false,
   vendor: false,
 };

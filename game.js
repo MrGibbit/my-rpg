@@ -11,159 +11,34 @@ import {
   BASE_HP, HP_PER_LEVEL, wallet, MAX_INV, MAX_BANK, inv, bank, quiver, groundLoot,
   manualDropLocks, lootUi, equipment, meleeState, resources, mobs, interactables,
   worldState, availability, windowsOpen, useState, characterState, chatUI,
+  ZONE_KEYS, getActiveZone, setActiveZone, getZoneState, getZoneDimensions,
   gatherParticles, combatFX, mouse, player
 } from "./src/state.js";
+import {
+  COOK_RECIPES, CLASS_DEFS, MOB_DEFS, DEFAULT_VENDOR_STOCK, DEFAULT_MOB_LEVELS, VENDOR_SELL_MULT
+} from "./src/game-data.js";
+import {
+  createDecorLookup, stampVendorShopLayout, VENDOR_TILE, DECOR_EXAMINE_TEXT
+} from "./src/world-layout.js";
+import {
+  initWorldSeed as initWorldSeedState, makeRng, randInt, keyXY, inRectMargin, nearTileType as nearTileTypeInMap
+} from "./src/world-seed.js";
+import { createPersistence } from "./src/persistence.js";
+import { createEntityLookup } from "./src/entity-lookup.js";
+import { createCombatRolls } from "./src/combat-rolls.js";
+import { createInteractionHelpers } from "./src/interaction-helpers.js";
+import { createCombatEffects } from "./src/combat-effects.js";
+import { createMobAI } from "./src/mob-ai.js";
+import { createFXRenderer } from "./src/fx-render.js";
+import { createActionResolver } from "./src/action-resolver.js";
+import { createMinimap } from "./src/minimap.js";
 
 // Keep this local so game.js doesn't hard-fail if a stale cached state module is loaded.
 const vendorShop = { x0: 16, y0: 3, w: 8, h: 6 };
-const VENDOR_TILE = { x: 20, y: 4 };
-
-function buildCastleDecorDefs(){
-  const x0 = startCastle.x0 | 0;
-  const y0 = startCastle.y0 | 0;
-  const x1 = x0 + (startCastle.w | 0) - 1;
-  const y1 = y0 + (startCastle.h | 0) - 1;
-  const gateX = (startCastle.gateX ?? (x0 + Math.floor((startCastle.w | 0) / 2))) | 0;
-  const ix0 = x0 + 1;
-  const ix1 = x1 - 1;
-  const iy0 = y0 + 1;
-  const iy1 = y1 - 1;
-
-  const defs = [
-    { id: "castle_torch", label: "Wall Torch", x: ix0 + 2, y: iy0 },
-    { id: "castle_torch", label: "Wall Torch", x: ix1 - 2, y: iy0 },
-    { id: "castle_weapon_rack", label: "Weapon Rack", x: ix0, y: iy0 + 2 },
-    { id: "castle_table", label: "Command Table", x: gateX, y: iy0 + 1 },
-    { id: "castle_bench", label: "Stone Bench", x: gateX - 2, y: y1 + 1 },
-    { id: "castle_torch", label: "Wall Torch", x: gateX - 1, y: y1 },
-    { id: "castle_torch", label: "Wall Torch", x: gateX + 1, y: y1 },
-    { id: "castle_bookshelf", label: "Bookshelf", x: ix1 - 1, y: iy0 + 1 }
-  ];
-
-  for (let y = iy0 + 1; y <= iy1; y++){
-    defs.push({ id: "castle_rug", label: "Royal Rug", x: gateX, y });
-  }
-  return defs;
-}
-
-const CASTLE_DECOR_DEFS = buildCastleDecorDefs();
-function buildShopDecorDefs(){
-  const x0 = vendorShop.x0 | 0;
-  const y0 = vendorShop.y0 | 0;
-  const x1 = x0 + (vendorShop.w | 0) - 1;
-  const y1 = y0 + (vendorShop.h | 0) - 1;
-  const gateX = x0 + Math.floor((vendorShop.w | 0) / 2);
-  const ix0 = x0 + 1;
-  const ix1 = x1 - 1;
-  const iy0 = y0 + 1;
-  const iy1 = y1 - 1;
-
-  const defs = [
-    { id: "shop_shelf", label: "Supply Shelf", x: ix1 - 1, y: iy0 },
-    { id: "shop_counter", label: "Trade Counter", x: ix1, y: iy0 + 2 },
-    { id: "shop_barrel", label: "Storage Barrel", x: ix1, y: iy1 },
-    { id: "shop_crate", label: "Storage Crate", x: x1 + 1, y: y1 },
-    { id: "shop_barrel", label: "Storage Barrel", x: x0 - 1, y: y1 },
-    { id: "shop_sign", label: "Shop Signpost", x: gateX + 1, y: y1 + 2 },
-    { id: "shop_lantern", label: "Door Lantern", x: gateX + 1, y: y1 },
-    { id: "shop_bush", label: "Trimmed Bush", x: x0 - 1, y: y1 - 1 },
-    { id: "shop_bush", label: "Trimmed Bush", x: x1 + 1, y: y0 + 1 },
-    { id: "shop_flower", label: "Flower Patch", x: x1 + 2, y: y0 + 2 }
-  ];
-  for (let y = iy0 + 1; y <= iy1; y++){
-    defs.push({ id: "shop_rug", label: "Shop Runner", x: gateX, y });
-  }
-  return defs;
-}
-
-const SHOP_DECOR_DEFS = buildShopDecorDefs();
-const DECOR_DEFS = [...CASTLE_DECOR_DEFS, ...SHOP_DECOR_DEFS];
-const DECOR_LOOKUP = new Map();
-for (const d of DECOR_DEFS){
-  const k = `${d.x},${d.y}`;
-  if (!DECOR_LOOKUP.has(k)) DECOR_LOOKUP.set(k, d);
-}
-
-const DECOR_EXAMINE_TEXT = {
-  castle_torch: "A wall-mounted torch keeps the hall warmly lit.",
-  castle_weapon_rack: "A tidy rack of training weapons.",
-  castle_table: "A command table covered with simple field notes.",
-  castle_bench: "A heavy stone bench for weary travelers.",
-  castle_bookshelf: "Shelves packed with old manuals and records.",
-  castle_armor_stand: "A ceremonial suit of armor stands on display.",
-  castle_candle: "A brass candle stand with a steady little flame.",
-  castle_crest: "The castle crest, polished and proudly displayed.",
-  castle_rug: "A royal runner rug leading through the hall.",
-
-  shop_shelf: "Shelves stacked with mixed supplies for travelers.",
-  shop_counter: "A sturdy counter for haggling and trade.",
-  shop_crate: "A crate of dry goods and spare tools.",
-  shop_barrel: "A barrel sealed tight against weather and pests.",
-  shop_sign: "A signpost marking the local trading shop.",
-  shop_lantern: "A lantern that helps customers find the door at night.",
-  shop_bush: "A neatly trimmed bush that brightens the storefront.",
-  shop_flower: "A patch of hardy flowers planted by the path.",
-  shop_rug: "A woven runner that guides customers to the counter."
-};
-
-function getDecorAt(tx, ty){
-  return DECOR_LOOKUP.get(`${tx},${ty}`) ?? null;
-}
-
-function mapInBounds(x, y){
-  return x >= 0 && y >= 0 && x < W && y < H;
-}
-
-function paintPathTile(x, y){
-  if (!mapInBounds(x, y)) return;
-  const t = map[y][x];
-  if (t === 0 || t === 5) map[y][x] = 5;
-}
-
-function carveManhattanPath(x0, y0, x1, y1){
-  let x = x0 | 0;
-  let y = y0 | 0;
-  paintPathTile(x, y);
-  while (x !== x1){
-    x += Math.sign(x1 - x);
-    paintPathTile(x, y);
-  }
-  while (y !== y1){
-    y += Math.sign(y1 - y);
-    paintPathTile(x, y);
-  }
-}
-
-function stampVendorShopLayout(){
-  const x0 = vendorShop.x0 | 0;
-  const y0 = vendorShop.y0 | 0;
-  const w = vendorShop.w | 0;
-  const h = vendorShop.h | 0;
-  if (w < 3 || h < 3) return;
-
-  for (let y = y0; y < y0 + h; y++){
-    for (let x = x0; x < x0 + w; x++){
-      if (!mapInBounds(x, y)) continue;
-      const edge = (x === x0 || x === x0 + w - 1 || y === y0 || y === y0 + h - 1);
-      map[y][x] = edge ? 4 : 3;
-    }
-  }
-
-  const gateX = x0 + Math.floor(w / 2);
-  const gateY = y0 + h - 1;
-  if (mapInBounds(gateX, gateY)) map[gateY][gateX] = 5;
-  if (mapInBounds(gateX, gateY + 1)) map[gateY + 1][gateX] = 5;
-  if (mapInBounds(gateX, gateY + 2)) map[gateY + 2][gateX] = 5;
-
-  const fromX = (startCastle.gateX ?? (startCastle.x0 + Math.floor(startCastle.w / 2))) | 0;
-  const fromY = ((startCastle.gateY ?? (startCastle.y0 + startCastle.h - 1)) + 1) | 0;
-  const toX = gateX;
-  const toY = gateY + 2;
-  carveManhattanPath(fromX, fromY, toX, toY);
-}
+const getDecorAt = createDecorLookup(startCastle, vendorShop);
 
 // Ensure vendor shop exists even if an older cached state.js is still loaded.
-stampVendorShopLayout();
+stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
 
 (() => {
 
@@ -194,6 +69,9 @@ stampVendorShopLayout();
   const ctx = canvas.getContext("2d");
   const VIEW_W = canvas.width;
   const VIEW_H = canvas.height;
+  const query = new URLSearchParams(window.location.search);
+  const TEST_MODE = ["1", "true", "yes"].includes(String(query.get("test") || "").toLowerCase());
+  const DEBUG_API_ENABLED = TEST_MODE || ["1", "true", "yes"].includes(String(query.get("debug") || "").toLowerCase());
 
   // Zoom
   function setZoom(z) {
@@ -212,7 +90,57 @@ stampVendorShopLayout();
   function viewWorldH(){ return VIEW_H / view.zoom; }
 
   // ---------- Map / pathfinding ----------
-  const { inBounds, isWalkable, isIndoors, astar } = createNavigation(map, W, H);
+  let inBounds = () => false;
+  let isWalkable = () => false;
+  let isIndoors = () => false;
+  let astar = () => null;
+
+  function rebuildNavigation() {
+    const { width, height } = getZoneDimensions(getActiveZone());
+    const nav = createNavigation(map, width, height);
+    inBounds = nav.inBounds;
+    isWalkable = nav.isWalkable;
+    isIndoors = nav.isIndoors;
+    astar = nav.astar;
+  }
+
+  function navInBounds(x, y) { return inBounds(x, y); }
+  function navIsWalkable(x, y) { return isWalkable(x, y); }
+  function navAstar(sx, sy, gx, gy) { return astar(sx, sy, gx, gy); }
+
+  rebuildNavigation();
+
+  const OVERWORLD_LADDER_DOWN = { x: 17, y: 4 };
+  const OVERWORLD_RETURN_TILE = { x: 17, y: 5 };
+  const DUNGEON_LADDER_UP = { x: 10, y: 10 };
+  const DUNGEON_SPAWN_TILE = { x: 10, y: 11 };
+  const DUNGEON_DEFAULT_MOB_SPAWNS = [
+    { type: "rat", x: 24, y: 9 },
+    { type: "rat", x: 26, y: 13 },
+    { type: "goblin", x: 31, y: 11 }
+  ];
+  const DUNGEON_LEGACY_MOB_LAYOUTS = [
+    [
+      { type: "rat", x: 14, y: 10 },
+      { type: "rat", x: 16, y: 12 },
+      { type: "goblin", x: 18, y: 11 }
+    ],
+    [
+      { type: "rat", x: 24, y: 10 },
+      { type: "rat", x: 31, y: 12 },
+      { type: "goblin", x: 29, y: 30 }
+    ]
+  ];
+  const DUNGEON_TORCHES = [
+    { x: 7, y: 8, side: -1 }, { x: 13, y: 8, side: 1 },
+    { x: 24, y: 7, side: -1 }, { x: 33, y: 7, side: 1 },
+    { x: 24, y: 15, side: -1 }, { x: 33, y: 15, side: 1 },
+    { x: 23, y: 26, side: -1 }, { x: 34, y: 26, side: 1 },
+  ];
+  const DUNGEON_PILLARS = [
+    { x: 25, y: 9 }, { x: 32, y: 9 }, { x: 25, y: 13 }, { x: 32, y: 13 },
+    { x: 27, y: 28 }, { x: 30, y: 28 }
+  ];
 
   function iconTile(body, top, mid, edge = "#26180f"){
     return `<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
@@ -277,6 +205,12 @@ stampVendorShopLayout();
       <path d="M4 5 C6 3.5 10 3.5 12 5" fill="none" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round"/>
       <path d="M5 6.5 C6.5 7.2 9.5 7.2 11 6.5" fill="none" stroke="#94a3b8" stroke-width="1"/>
     `,
+    hammer: `
+      <rect x="7" y="4" width="2" height="9" fill="#8b5a2b"/>
+      <rect x="5" y="3" width="6" height="2" fill="#cbd5e1"/>
+      <rect x="4" y="4" width="8" height="1" fill="#94a3b8"/>
+      <rect x="7" y="11" width="2" height="1" fill="#5b3a1d"/>
+    `,
     knife: `
       <path d="M4 9 L10.5 4.3 L12 5.8 L5.4 10.4 Z" fill="#e2e8f0"/>
       <path d="M10.4 4.3 L12.8 3.4 L12 5.8 Z" fill="#f8fafc"/>
@@ -309,6 +243,13 @@ stampVendorShopLayout();
       <path d="M8 4.3 L10.8 5.8 L10.1 9.2 L7.2 10.8 L5.5 8.8 L6.1 5.9 Z" fill="#cbd5e1"/>
       <rect x="7" y="6" width="1.2" height="1.2" fill="#f8fafc"/>
       <rect x="8.8" y="8.3" width="1" height="1" fill="#f8fafc"/>
+    `,
+    bar: `
+      <rect x="3" y="5" width="10" height="6" rx="1" fill="#8f7657"/>
+      <rect x="4" y="6" width="8" height="4" rx="1" fill="#bfa07a"/>
+      <rect x="5" y="7" width="6" height="2" fill="#d9c3a5"/>
+      <rect x="4" y="5" width="8" height="1" fill="rgba(255,255,255,.28)"/>
+      <rect x="4" y="10" width="8" height="1" fill="rgba(0,0,0,.25)"/>
     `,
     bone: `
       <circle cx="4.8" cy="6.2" r="1.7" fill="#f1f5f9"/>
@@ -398,6 +339,7 @@ stampVendorShopLayout();
     fletching: flatIcon("feather"),
     woodcutting: flatIcon("tree"),
     mining: flatIcon("pick"),
+    smithing: flatIcon("ore"),
     fishing: flatIcon("fish"),
     firemaking: flatIcon("fire"),
     cooking: flatIcon("pot")
@@ -413,6 +355,7 @@ stampVendorShopLayout();
     fletching: "Fletching",
     woodcutting: "Woodcutting",
     mining: "Mining",
+    smithing: "Smithing",
     fishing: "Fishing",
     firemaking: "Firemaking",
     cooking: "Cooking"
@@ -423,7 +366,9 @@ stampVendorShopLayout();
   }
 
   for (const [k, name] of Object.entries(SKILL_NAMES)){
-    if (Skills[k]) Skills[k].name = name;
+    // Keep runtime resilient if a stale cached state module is missing newer skills.
+    if (!Skills[k]) Skills[k] = { name, xp: 0 };
+    else Skills[k].name = name;
   }
 // used to tint "Attack X" in the right-click menu
 function ctxLevelClass(playerLvl, enemyLvl){
@@ -469,24 +414,29 @@ function levelStrokeForCls(cls){
   }
 
   const Items = {
-    axe:  { id:"axe",  name:"Crude Axe",  stack:false, icon:icon("axe", "#8f6a3b", "#4a321d", "#24160d") },
-    pick: { id:"pick", name:"Crude Pick", stack:false, icon:icon("pick", "#6e7f93", "#3a4558", "#1d2430") },
-    knife:{ id:"knife",name:"Knife",      stack:false, icon:icon("knife", "#7a7b7d", "#3b3c3f", "#1c1d1f") },
-    gold: { id:"gold", name:"Coins", stack:true, currency:true, icon:icon("coin", "#aa7a18", "#5a3f0c", "#2d1f06") },
-    flint_steel:{ id:"flint_steel", name:"Flint & Steel", stack:false, icon:icon("flint", "#4d6b74", "#283b40", "#141f22") },
+    axe:  { id:"axe",  name:"Crude Axe",  stack:false, icon:icon("axe", "#8f6a3b", "#4a321d", "#24160d"), flatIcon:flatIcon("axe") },
+    pick: { id:"pick", name:"Crude Pick", stack:false, icon:icon("pick", "#6e7f93", "#3a4558", "#1d2430"), flatIcon:flatIcon("pick") },
+    hammer: { id:"hammer", name:"Hammer", stack:false, icon:icon("hammer", "#6e7f93", "#3a4558", "#1d2430"), flatIcon:flatIcon("hammer") },
+    knife:{ id:"knife",name:"Knife",      stack:false, icon:icon("knife", "#7a7b7d", "#3b3c3f", "#1c1d1f"), flatIcon:flatIcon("knife") },
+    gold: { id:"gold", name:"Coins", stack:true, currency:true, icon:icon("coin", "#aa7a18", "#5a3f0c", "#2d1f06"), flatIcon:flatIcon("coin") },
+    flint_steel:{ id:"flint_steel", name:"Flint & Steel", stack:false, icon:icon("flint", "#4d6b74", "#283b40", "#141f22"), flatIcon:flatIcon("flint") },
 
-    sword: { id:"sword", name:"Sword", stack:false, icon:icon("sword", "#748198", "#3b4455", "#1d222b"), equipSlot:"weapon" },
-    shield:{ id:"shield",name:"Shield",stack:false, icon:icon("shield", "#3f7267", "#22423b", "#11221e"), equipSlot:"offhand" },
-    bow:   { id:"bow",   name:"Bow",   stack:false, icon:icon("bow", "#89673c", "#4b341f", "#251a0f"), equipSlot:"weapon" },
+    sword: { id:"sword", name:"Sword", stack:false, icon:icon("sword", "#748198", "#3b4455", "#1d222b"), flatIcon:flatIcon("sword"), equipSlot:"weapon", combat:{ style:"melee", att:3, dmg:3 } },
+    shield:{ id:"shield",name:"Shield",stack:false, icon:icon("shield", "#3f7267", "#22423b", "#11221e"), flatIcon:flatIcon("shield"), equipSlot:"offhand", combat:{ style:"any", def:3 } },
+    bow:   { id:"bow",   name:"Bow",   stack:false, icon:icon("bow", "#89673c", "#4b341f", "#251a0f"), flatIcon:flatIcon("bow"), equipSlot:"weapon", combat:{ style:"ranged", att:3, dmg:3 } },
 
-    wooden_arrow:{ id:"wooden_arrow", name:"Wooden Arrow", stack:true, ammo:true, icon:icon("arrow", "#8a653a", "#4b341f", "#261a10") },
-    bronze_arrow:{ id:"bronze_arrow", name:"Bronze Arrow", stack:true, ammo:true, icon:icon("arrow", "#a76f2f", "#5f3a16", "#311d0a") },
+    wooden_arrow:{ id:"wooden_arrow", name:"Wooden Arrow", stack:true, ammo:true, icon:icon("arrow", "#8a653a", "#4b341f", "#261a10"), flatIcon:flatIcon("arrow") },
+    bronze_arrow:{ id:"bronze_arrow", name:"Bronze Arrow", stack:true, ammo:true, icon:icon("arrow", "#a76f2f", "#5f3a16", "#311d0a"), flatIcon:flatIcon("arrow") },
 
-    staff: { id:"staff", name:"Wooden Staff", stack:false, icon:icon("staff", "#6b4ba3", "#3a2758", "#1f1430"), equipSlot:"weapon" },
+    staff: { id:"staff", name:"Wooden Staff", stack:false, icon:icon("staff", "#6b4ba3", "#3a2758", "#1f1430"), flatIcon:flatIcon("staff"), equipSlot:"weapon", combat:{ style:"magic", att:3, dmg:3 } },
 
-    log:  { id:"log",  name:"Log",  stack:true, icon:icon("log", "#876239", "#4a321d", "#24160d") },
-    ore:  { id:"ore",  name:"Ore",  stack:true, icon:icon("ore", "#6f7f90", "#3a4454", "#1e2430") },
-    bone: { id:"bone", name:"Bone", stack:true, icon:icon("bone", "#7d868e", "#4c545c", "#24292e") },
+    log:  { id:"log",  name:"Log",  stack:true, icon:icon("log", "#876239", "#4a321d", "#24160d"), flatIcon:flatIcon("log") },
+    ore:  { id:"ore",  name:"Crude Ore",  stack:true, icon:icon("ore", "#6f7f90", "#3a4454", "#1e2430"), flatIcon:flatIcon("ore") },
+    crude_bar: { id:"crude_bar", name:"Crude Bar", stack:true, icon:icon("bar", "#8b7b64", "#4a4135", "#221d16"), flatIcon:flatIcon("bar") },
+    crude_dagger: { id:"crude_dagger", name:"Crude Dagger", stack:false, icon:icon("knife", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("knife"), equipSlot:"weapon", combat:{ style:"melee", att:2, dmg:2 } },
+    crude_sword: { id:"crude_sword", name:"Crude Sword", stack:false, icon:icon("sword", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("sword"), equipSlot:"weapon", combat:{ style:"melee", att:2, dmg:2 } },
+    crude_shield: { id:"crude_shield", name:"Crude Shield", stack:false, icon:icon("shield", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("shield"), equipSlot:"offhand", combat:{ style:"any", def:2 } },
+    bone: { id:"bone", name:"Bone", stack:true, icon:icon("bone", "#7d868e", "#4c545c", "#24292e"), flatIcon:flatIcon("bone") },
     rat_meat: {
       id:"rat_meat",
       name:"Raw Rat Meat",
@@ -578,13 +528,6 @@ goldfish_cracker: {
 
 
   };
-// ---------- Cooking recipes ----------
-// Used by the campfire interaction (and respects the current "Use:" item if it matches).
-const COOK_RECIPES = {
-  rat_meat: { out: "cooked_rat_meat", xp: 12, verb: "cook some meat" },
-  goldfish: { out: "goldfish_cracker", xp: 12, verb: "cook a gold fish cracker" },
-};
-
   // ---------- Quiver (arrows do not take inventory slots) ----------
   function addToQuiver(id, qty){
     const item = Items[id];
@@ -1027,115 +970,13 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   }
 
   // ---------- Entities ----------
-const MOB_DEFS = {
-rat: {
-  name: "Rat",
-  hp: 8, // was 12
-
-  levels: { accuracy:1, power:1, defense:1, ranged:1, sorcery:1, health:1 },
-
-  aggroOnSight: false,
-  moveSpeed: 140,
-
-  aggroRange: 4.0,
-  leash: 7.0,
-  attackRange: 1.15,
-  attackSpeedMs: 1600, // slower attacks
-  maxHit: 1            // rats shouldnâ€™t chunk you
-},
-goblin: {
-  name: "Goblin",
-  hp: 14,
-  levels: { accuracy:4, power:4, defense:2, ranged:1, sorcery:1, health:2 },
-  aggroOnSight: false,
-  moveSpeed: 145,
-  aggroRange: 4.4,
-  leash: 8.0,
-  attackRange: 1.15,
-  attackSpeedMs: 1500,
-  maxHit: 2
-},
-
-};
-
-
-
-// ---------- Persistent world seed ----------
-const WORLD_SEED_KEY = "classic_world_seed_v1";
-
-function initWorldSeed(){
-  try{
-    const raw = localStorage.getItem(WORLD_SEED_KEY);
-    const n = raw == null ? NaN : parseInt(raw, 10);
-
-    if (Number.isFinite(n) && n > 0){
-      worldState.seed = (n >>> 0);
-      return;
-    }
-
-    // First run (or invalid): lock in the default seed above
-    worldState.seed = (worldState.seed >>> 0);
-    localStorage.setItem(WORLD_SEED_KEY, String(worldState.seed));
-  }catch{
-    // If localStorage is blocked, we still keep a stable default seed
-    worldState.seed = (worldState.seed >>> 0);
+  function initWorldSeed(){
+    initWorldSeedState(localStorage, worldState);
   }
-}
-// ---------- Seeded RNG + placement helpers ----------
-function makeRng(seed){
-  let t = (seed >>> 0) || 0x12345678;
-  return function(){
-    // xorshift32
-    t ^= (t << 13); t >>>= 0;
-    t ^= (t >>> 17); t >>>= 0;
-    t ^= (t << 5);  t >>>= 0;
-    return (t >>> 0) / 4294967296;
-  };
-}
-function randInt(rng, a, b){ return a + Math.floor(rng() * (b - a + 1)); }
-function keyXY(x,y){ return `${x},${y}`; }
 
-function inRectMargin(x,y, rect, margin){
-  return (
-    x >= rect.x0 - margin && x <= (rect.x0 + rect.w - 1) + margin &&
-    y >= rect.y0 - margin && y <= (rect.y0 + rect.h - 1) + margin
-  );
-}
-function nearTileType(x,y, tileVal, radius){
-  for (let dy=-radius; dy<=radius; dy++){
-    for (let dx=-radius; dx<=radius; dx++){
-      const nx = x + dx, ny = y + dy;
-      if (!inBounds(nx,ny)) continue;
-      if (map[ny][nx] === tileVal) return true;
-    }
+  function nearTileType(x, y, tileVal, radius){
+    return nearTileTypeInMap(map, inBounds, x, y, tileVal, radius);
   }
-  return false;
-}
-
-
-const VENDOR_SELL_MULT = 0.5;
-
-const DEFAULT_VENDOR_STOCK = [
-  { id: "wooden_arrow", price: 1, bulk: [1, 10, 50] },
-  { id: "log", price: 2, bulk: [1, 5] },
-  { id: "ore", price: 3, bulk: [1, 5] },
-  { id: "bone", price: 1, bulk: [1, 5] },
-  { id: "axe", price: 25, bulk: [1] },
-  { id: "pick", price: 25, bulk: [1] },
-  { id: "staff", price: 45, bulk: [1] },
-  { id: "sword", price: 60, bulk: [1] },
-  { id: "shield", price: 60, bulk: [1] },
-  { id: "bow", price: 75, bulk: [1] },
-
-];
-const DEFAULT_MOB_LEVELS = {
-  accuracy: 1,
-  power: 1,
-  defense: 1,
-  ranged: 1,
-  sorcery: 1,
-  health: 1
-};
 
 
   function placeResource(type,x,y){ resources.push({type,x,y,alive:true,respawnAt:0}); }
@@ -1183,6 +1024,7 @@ const DEFAULT_MOB_LEVELS = {
     keyXY(startCastle.x0 + 4, startCastle.y0 + 3),     // bank
     keyXY(VENDOR_TILE.x, VENDOR_TILE.y),               // vendor in shop
     keyXY(startCastle.x0 + 6, startCastle.y0 + 4),     // player spawn-ish
+    keyXY(OVERWORLD_LADDER_DOWN.x, OVERWORLD_LADDER_DOWN.y), // dungeon ladder
   ]);
 
   function tileOkForResource(x,y){
@@ -1401,7 +1243,12 @@ const DEFAULT_MOB_LEVELS = {
     if (resources.some(r => r.alive && r.x===x && r.y===y)) return false;
 
     // Avoid interactable tiles (known)
-    if ((x===startCastle.x0+4 && y===startCastle.y0+3) || (x===VENDOR_TILE.x && y===VENDOR_TILE.y) || (x===9 && y===13)) return false;
+    if (
+      (x===startCastle.x0+4 && y===startCastle.y0+3) ||
+      (x===VENDOR_TILE.x && y===VENDOR_TILE.y) ||
+      (x===9 && y===13) ||
+      (x===OVERWORLD_LADDER_DOWN.x && y===OVERWORLD_LADDER_DOWN.y)
+    ) return false;
 
     // Avoid castles/keeps + a buffer so early game feels safe
     if (inRectMargin(x,y, startCastle, 6)) return false;
@@ -1586,6 +1433,7 @@ const DEFAULT_MOB_LEVELS = {
     const by = startCastle.y0 + 3;
     placeInteractable("bank", bx, by);
     placeInteractable("vendor", VENDOR_TILE.x, VENDOR_TILE.y);
+    placeInteractable("ladder_down", OVERWORLD_LADDER_DOWN.x, OVERWORLD_LADDER_DOWN.y);
 // Fishing spots on the river near the starter castle
 placeInteractable("fish", 6, RIVER_Y);
 placeInteractable("fish", 10, RIVER_Y + 1);
@@ -1604,9 +1452,13 @@ placeInteractable("anvil", sx + 2, sy);
   // ---------- Character / class ----------
   const SAVE_KEY="classic_inspired_rpg_save_v10_quiver_loot_health_windows";
   const CHAR_KEY = "classic_char_v3";
+  const CHAR_LIST_KEY = "classic_char_list_v1";
+  const ACTIVE_CHAR_ID_KEY = "classic_active_char_id_v1";
   const CHAT_UI_KEY = "classic_chat_ui_v1";
   const WINDOWS_UI_KEY = "classic_windows_ui_v2_multi_open";
 const BGM_KEY = "classic_bgm_v1";
+
+  let activeCharacterId = null;
 
   const hudChatEl = document.getElementById("hudChat");
   const hudChatTabEl = document.getElementById("hudChatTab");
@@ -1787,13 +1639,6 @@ const BGM_KEY = "classic_bgm_v1";
     });
   })();
 
-
-  const CLASS_DEFS = {
-    Warrior: { color: "#ef4444" },
-    Ranger:  { color: "#facc15" },
-    Mage:    { color: "#22d3ee" },
-  };
-
   function tileCenter(x,y){ return {cx:x*TILE+TILE/2, cy:y*TILE+TILE/2}; }
   function syncPlayerPix(){ const {cx,cy}=tileCenter(player.x,player.y); player.px=cx; player.py=cy; }
   syncPlayerPix();
@@ -1848,6 +1693,11 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   function getCombatStyle(){
+    const w = equipment.weapon ? Items[equipment.weapon] : null;
+    const explicit = w?.combat?.style;
+    if (explicit === "ranged" || explicit === "magic" || explicit === "melee") return explicit;
+
+    // Keep legacy class fallback when no explicit combat style is set.
     if (equipment.weapon === "bow" || (player.class === "Ranger" && (hasItem("bow") || equipment.weapon === "bow"))) return "ranged";
     if (equipment.weapon === "staff" || (player.class === "Mage" && (hasItem("staff") || equipment.weapon === "staff"))) return "magic";
     return "melee";
@@ -1882,6 +1732,7 @@ const BGM_KEY = "classic_bgm_v1";
   const winSkills    = document.getElementById("winSkills");
   const winBank      = document.getElementById("winBank");
   const winVendor    = document.getElementById("winVendor");
+  const winSmithing  = document.getElementById("winSmithing");
 
   const winSettings  = document.getElementById("winSettings");
 
@@ -1899,6 +1750,7 @@ const BGM_KEY = "classic_bgm_v1";
     ["skills", winSkills],
     ["bank", winBank],
     ["vendor", winVendor],
+    ["smithing", winSmithing],
     ["settings", winSettings]
   ].filter(([, el]) => !!el);
 
@@ -2109,6 +1961,9 @@ const BGM_KEY = "classic_bgm_v1";
   const skillsGrid = document.getElementById("skillsGrid");
   const skillsCombatPillEl = document.getElementById("skillsCombatPill");
 
+  const eqWeaponSlot = document.getElementById("eqWeapon");
+  const eqOffhandSlot = document.getElementById("eqOffhand");
+  const eqQuiverSlot = document.getElementById("eqQuiver");
   const eqWeaponIcon = document.getElementById("eqWeaponIcon");
   const eqWeaponName = document.getElementById("eqWeaponName");
   const eqOffhandIcon = document.getElementById("eqOffhandIcon");
@@ -2119,6 +1974,30 @@ const BGM_KEY = "classic_bgm_v1";
 
   const bankGrid = document.getElementById("bankGrid");
   const bankCountEl = document.getElementById("bankCount");
+  const smithingListEl = document.getElementById("smithingList");
+  const smithingLevelPillEl = document.getElementById("smithingLevelPill");
+
+  const SMITHING_RECIPES_BY_BAR = {
+    crude_bar: [
+      { out: "crude_dagger", bars: 1, level: 1, xp: 24 },
+      { out: "crude_sword", bars: 2, level: 3, xp: 42 },
+      { out: "crude_shield", bars: 2, level: 4, xp: 44 }
+    ]
+  };
+
+  function getItemCombatStatText(id){
+    const c = Items[id]?.combat;
+    if (!c) return "";
+    const parts = [];
+    if (c.style && c.style !== "any"){
+      const style = String(c.style);
+      parts.push(`Style: ${style[0].toUpperCase()}${style.slice(1)}`);
+    }
+    if ((c.att|0) !== 0) parts.push(`+${c.att|0} ACC`);
+    if ((c.dmg|0) !== 0) parts.push(`+${c.dmg|0} DMG`);
+    if ((c.def|0) !== 0) parts.push(`+${c.def|0} DEF`);
+    return parts.join(" · ");
+  }
 
   function renderInv(){
     invGrid.innerHTML = "";
@@ -2131,27 +2010,33 @@ const BGM_KEY = "classic_bgm_v1";
 
       if (!s){
         slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
+        slot.title = "";
+        delete slot.dataset.tooltip;
       } else {
         const item = Items[s.id];
         const qty = (s.qty|0) || 1;
         slot.innerHTML = `
-          <div class="icon">${item?.icon ?? UNKNOWN_ICON}</div>
+          <div class="icon">${item?.flatIcon ?? item?.icon ?? UNKNOWN_ICON}</div>
           <div class="name">${item?.name ?? s.id}</div>
           ${qty > 1 ? `<div class="qty">${qty}</div>` : ``}
         `;
-        slot.title = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}`;
+        const stats = getItemCombatStatText(s.id);
+        const tip = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
+        slot.title = tip;
+        slot.dataset.tooltip = tip;
       }
       invGrid.appendChild(slot);
     }
+    renderSmithingUI();
   }
 
   function renderSkills(){
     skillsGrid.innerHTML = "";
     if (skillsCombatPillEl) skillsCombatPillEl.textContent = `Combat: ${getPlayerCombatLevel(Skills)}`;
 
-    const order = ["health","accuracy","power","defense","ranged","sorcery","fletching","woodcutting","mining","fishing","firemaking","cooking"];
+    const order = ["health","accuracy","power","defense","ranged","sorcery","fletching","woodcutting","mining","smithing","fishing","firemaking","cooking"];
     for (const k of order){
-      const s = Skills[k];
+      const s = Skills[k] ?? { name: getSkillName(k), xp: 0 };
       const skillName = getSkillName(k);
       const { lvl, next, pct } = xpToNext(s.xp);
       const toNext = Math.max(0, next - s.xp);
@@ -2176,15 +2061,24 @@ const BGM_KEY = "classic_bgm_v1";
 
     const arrows = getQuiverCount();
     if (arrows > 0){
-      eqQuiverIcon.innerHTML = Items.wooden_arrow?.icon ?? UNKNOWN_ICON;
+      eqQuiverIcon.innerHTML = Items.wooden_arrow?.flatIcon ?? Items.wooden_arrow?.icon ?? UNKNOWN_ICON;
       eqQuiverName.textContent = `${Items.wooden_arrow?.name ?? "Wooden Arrow"} x${arrows}`;
       eqQuiverQty.textContent = String(arrows);
       eqQuiverQty.classList.remove("isHidden");
+      if (eqQuiverSlot){
+        const tip = `${Items.wooden_arrow?.name ?? "Wooden Arrow"} x${arrows}`;
+        eqQuiverSlot.title = tip;
+        eqQuiverSlot.dataset.tooltip = tip;
+      }
     } else {
       eqQuiverIcon.textContent = "-";
       eqQuiverName.textContent = "Empty";
       eqQuiverQty.textContent = "0";
       eqQuiverQty.classList.add("isHidden");
+      if (eqQuiverSlot){
+        eqQuiverSlot.title = "";
+        delete eqQuiverSlot.dataset.tooltip;
+      }
     }
   }
 
@@ -2193,19 +2087,41 @@ const BGM_KEY = "classic_bgm_v1";
     const o = equipment.offhand;
 
     if (w){
-      eqWeaponIcon.innerHTML = Items[w]?.icon ?? UNKNOWN_ICON;
-      eqWeaponName.textContent = Items[w]?.name ?? w;
+      const name = Items[w]?.name ?? w;
+      eqWeaponIcon.innerHTML = Items[w]?.flatIcon ?? Items[w]?.icon ?? UNKNOWN_ICON;
+      eqWeaponName.textContent = name;
+      if (eqWeaponSlot){
+        const stats = getItemCombatStatText(w);
+        const tip = `${name}${stats ? `\n${stats}` : ""}\nClick to unequip`;
+        eqWeaponSlot.title = tip;
+        eqWeaponSlot.dataset.tooltip = tip;
+      }
     } else {
       eqWeaponIcon.textContent = "-";
       eqWeaponName.textContent = "Empty";
+      if (eqWeaponSlot){
+        eqWeaponSlot.title = "";
+        delete eqWeaponSlot.dataset.tooltip;
+      }
     }
 
     if (o){
-      eqOffhandIcon.innerHTML = Items[o]?.icon ?? UNKNOWN_ICON;
-      eqOffhandName.textContent = Items[o]?.name ?? o;
+      const name = Items[o]?.name ?? o;
+      eqOffhandIcon.innerHTML = Items[o]?.flatIcon ?? Items[o]?.icon ?? UNKNOWN_ICON;
+      eqOffhandName.textContent = name;
+      if (eqOffhandSlot){
+        const stats = getItemCombatStatText(o);
+        const tip = `${name}${stats ? `\n${stats}` : ""}\nClick to unequip`;
+        eqOffhandSlot.title = tip;
+        eqOffhandSlot.dataset.tooltip = tip;
+      }
     } else {
       eqOffhandIcon.textContent = "-";
       eqOffhandName.textContent = "Empty";
+      if (eqOffhandSlot){
+        eqOffhandSlot.title = "";
+        delete eqOffhandSlot.dataset.tooltip;
+      }
     }
 
     renderQuiverSlot();
@@ -2222,16 +2138,159 @@ const BGM_KEY = "classic_bgm_v1";
       slot.dataset.index = String(i);
       if (!s){
         slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
+        slot.title = "";
+        delete slot.dataset.tooltip;
       } else {
         const item = Items[s.id];
         const qty = (s.qty|0) || 1;
         slot.innerHTML = `
-          <div class="icon">${item?.icon ?? UNKNOWN_ICON}</div>
+          <div class="icon">${item?.flatIcon ?? item?.icon ?? UNKNOWN_ICON}</div>
           <div class="name">${item?.name ?? s.id}</div>
           ${(item?.stack && qty>1) ? `<div class="qty">${qty}</div>` : ``}
         `;
+        const stats = getItemCombatStatText(s.id);
+        const tip = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
+        slot.title = tip;
+        slot.dataset.tooltip = tip;
       }
       bankGrid.appendChild(slot);
+    }
+  }
+
+  function forgeSmithingRecipe(barId, rec){
+    const barItem = Items[barId];
+    const outId = rec?.out;
+    const outItem = Items[outId];
+    if (!barItem || !outItem) return;
+
+    const needBars = Math.max(1, rec.bars | 0);
+    const reqLevel = Math.max(1, rec.level | 0);
+    const xp = Math.max(1, rec.xp | 0);
+    const smithingLevel = levelFromXP(Skills.smithing?.xp ?? 0);
+    const hasHammer = hasItem("hammer");
+
+    if (!availability.smithing){
+      chatLine(`<span class="muted">You need to be next to an anvil to smith.</span>`);
+      closeWindow("smithing");
+      return;
+    }
+    if (!hasHammer){
+      chatLine(`<span class="warn">You need a ${Items.hammer?.name ?? "hammer"} to use the anvil.</span>`);
+      return;
+    }
+    if (player.action.type !== "idle"){
+      chatLine(`<span class="muted">You're busy right now.</span>`);
+      return;
+    }
+    if (smithingLevel < reqLevel){
+      chatLine(`<span class="warn">You need Smithing level ${reqLevel}.</span>`);
+      return;
+    }
+    if (countInvQtyById(barId) < needBars){
+      chatLine(`<span class="warn">You need ${needBars}x ${barItem.name}.</span>`);
+      return;
+    }
+
+    chatLine(`<span class="muted">You begin forging a ${outItem.name.toLowerCase()}...</span>`);
+    startTimedAction("smith", 1500, "Smithing...", () => {
+      if (!availability.smithing){
+        chatLine(`<span class="warn">You moved away from the anvil.</span>`);
+        return;
+      }
+      if (!removeItemsFromInventory(barId, needBars)){
+        chatLine(`<span class="warn">You need ${needBars}x ${barItem.name}.</span>`);
+        return;
+      }
+
+      const got = addToInventory(outId, 1);
+      addXP("smithing", xp);
+      if (got === 1){
+        chatLine(`<span class="good">You forge a ${outItem.name}.</span> (+${xp} XP)`);
+      } else {
+        addGroundLoot(player.x, player.y, outId, 1);
+        chatLine(`<span class="warn">Inventory full: ${outItem.name}</span> (+${xp} XP)`);
+      }
+      renderSmithingUI();
+    });
+  }
+
+  function renderSmithingUI(){
+    if (!smithingListEl) return;
+
+    const smithingXp = Skills.smithing?.xp ?? 0;
+    const smithingLevel = levelFromXP(smithingXp);
+    if (smithingLevelPillEl) smithingLevelPillEl.textContent = `Smithing Lv ${smithingLevel}`;
+
+    smithingListEl.innerHTML = "";
+    const hasHammer = hasItem("hammer");
+
+    let shownAny = false;
+
+    for (const [barId, rows] of Object.entries(SMITHING_RECIPES_BY_BAR)){
+      const haveBars = countInvQtyById(barId);
+      if (haveBars <= 0) continue;
+
+      shownAny = true;
+      const barItem = Items[barId];
+      const barName = barItem?.name ?? barId;
+
+      const header = document.createElement("div");
+      header.className = "shopRow";
+      header.innerHTML = `
+        <div class="shopLeft">
+          <div class="shopIcon">${barItem?.icon ?? UNKNOWN_ICON}</div>
+          <div class="shopMeta">
+            <div class="shopName">${barName}</div>
+            <div class="shopSub">In inventory: ${haveBars}</div>
+          </div>
+        </div>
+        <div class="shopActions"></div>
+      `;
+      smithingListEl.appendChild(header);
+
+      for (const rec of rows){
+        const outId = rec?.out;
+        const outItem = Items[outId];
+        if (!outItem) continue;
+
+        const needBars = Math.max(1, rec.bars | 0);
+        const reqLevel = Math.max(1, rec.level | 0);
+        const xp = Math.max(1, rec.xp | 0);
+        const canAfford = haveBars >= needBars;
+        const canLevel = smithingLevel >= reqLevel;
+        const canForge = canAfford && canLevel && hasHammer;
+
+        const line = document.createElement("div");
+        line.className = "shopRow";
+        const lockText = canLevel ? "Recipe ready" : `Locked until Lv ${reqLevel}`;
+
+        line.innerHTML = `
+          <div class="shopLeft">
+            <div class="shopIcon">${barItem?.icon ?? UNKNOWN_ICON}</div>
+            <div class="shopMeta">
+              <div class="shopName">${outItem.name}</div>
+              <div class="shopSub">Cost: ${needBars}x ${barName} · ${lockText} · +${xp} XP</div>
+            </div>
+          </div>
+          <div class="shopActions"></div>
+        `;
+
+        const actions = line.querySelector(".shopActions");
+        const btn = document.createElement("button");
+        btn.className = "shopBtn";
+        btn.textContent = !hasHammer
+          ? "Need Hammer"
+          : (canLevel ? (canAfford ? "Forge" : "Need Bars") : `Lv ${reqLevel}`);
+        btn.disabled = !canForge;
+        btn.onclick = () => forgeSmithingRecipe(barId, rec);
+        actions.appendChild(btn);
+
+        smithingListEl.appendChild(line);
+      }
+    }
+
+    if (!shownAny){
+      smithingListEl.innerHTML = `<div class="hint">No smithing recipes available yet. Bring bars in your inventory to see matching recipes.</div>`;
     }
   }
 
@@ -2403,6 +2462,7 @@ const BGM_KEY = "classic_bgm_v1";
     winSkills.classList.toggle("hidden", !windowsOpen.skills);
     winBank.classList.toggle("hidden", !windowsOpen.bank);
     winVendor.classList.toggle("hidden", !windowsOpen.vendor);
+    if (winSmithing) winSmithing.classList.toggle("hidden", !windowsOpen.smithing);
 
     winSettings.classList.toggle("hidden", !windowsOpen.settings);
 
@@ -2416,8 +2476,8 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   function closeExclusive(exceptName){
-    // Skills / Bank / Settings are exclusive *between themselves*, but do not close inventory/equipment.
-    for (const k of ["skills","bank","vendor","settings"]){
+    // Skills / Bank / Vendor / Smithing / Settings are exclusive between themselves.
+    for (const k of ["skills","bank","vendor","smithing","settings"]){
       if (k !== exceptName) windowsOpen[k] = false;
     }
   }
@@ -2430,12 +2490,13 @@ const BGM_KEY = "classic_bgm_v1";
       windowsOpen[name] = true;
     }
 
-    // Bank access should auto-open inventory
-    if (name === "bank"){
+    // Some windows should auto-open inventory.
+    if (name === "bank" || name === "smithing"){
       windowsOpen.inventory = true;
     }
 
     applyWindowVis();
+    if (name === "smithing") renderSmithingUI();
     saveWindowsUI();
   }
 
@@ -2449,6 +2510,10 @@ const BGM_KEY = "classic_bgm_v1";
     if (name === "bank" && !availability.bank) return;
     if (name === "vendor" && !availability.vendor) {
       chatLine(`<span class="muted">You need to be next to a vendor to trade.</span>`);
+      return;
+    }
+    if (name === "smithing" && !availability.smithing) {
+      chatLine(`<span class="muted">You need to be next to an anvil to smith.</span>`);
       return;
     }
     const isOpen = !!windowsOpen[name];
@@ -2805,10 +2870,60 @@ if (toolId === "flint_steel" && targetId === "log") {
   const ctxMenu = document.createElement("div");
   ctxMenu.className = "ctxmenu hidden";
   document.body.appendChild(ctxMenu);
+  const itemTooltip = document.createElement("div");
+  itemTooltip.className = "itemTooltip hidden";
+  document.body.appendChild(itemTooltip);
 
   function closeCtxMenu(){
     ctxMenu.classList.add("hidden");
     ctxMenu.innerHTML = "";
+  }
+
+  function closeItemTooltip(){
+    itemTooltip.classList.add("hidden");
+    itemTooltip.textContent = "";
+  }
+
+  function moveItemTooltip(clientX, clientY){
+    if (itemTooltip.classList.contains("hidden")) return;
+    const pad = 10;
+    const xOff = 14;
+    const yOff = 16;
+    const rect = itemTooltip.getBoundingClientRect();
+    const x = clamp(clientX + xOff, pad, window.innerWidth - rect.width - pad);
+    const y = clamp(clientY + yOff, pad, window.innerHeight - rect.height - pad);
+    itemTooltip.style.left = `${x}px`;
+    itemTooltip.style.top = `${y}px`;
+  }
+
+  function openItemTooltip(text, clientX, clientY){
+    if (!text){
+      closeItemTooltip();
+      return;
+    }
+    itemTooltip.textContent = text;
+    itemTooltip.classList.remove("hidden");
+    moveItemTooltip(clientX, clientY);
+  }
+
+  function showSlotTooltip(e, arr){
+    const slot = e.target.closest(".slot");
+    if (!slot){
+      closeItemTooltip();
+      return;
+    }
+    const idx = parseInt(slot.dataset.index, 10);
+    if (!Number.isFinite(idx) || !arr[idx]){
+      closeItemTooltip();
+      return;
+    }
+    openItemTooltip(slot.dataset.tooltip || slot.title || "", e.clientX, e.clientY);
+  }
+
+  function showElementTooltip(e){
+    const el = e.currentTarget;
+    if (!el) return;
+    openItemTooltip(el.dataset.tooltip || el.title || "", e.clientX, e.clientY);
   }
 
   function openCtxMenu(clientX, clientY, options){
@@ -2841,11 +2956,35 @@ if (toolId === "flint_steel" && targetId === "log") {
     if (!ctxMenu.classList.contains("hidden") && !ctxMenu.contains(e.target)){
       closeCtxMenu();
     }
+    closeItemTooltip();
   });
   document.addEventListener("keydown", (e)=>{
-    if (e.key === "Escape") closeCtxMenu();
+    if (e.key === "Escape"){
+      closeCtxMenu();
+      closeItemTooltip();
+    }
   });
-  window.addEventListener("blur", closeCtxMenu);
+  window.addEventListener("blur", ()=>{
+    closeCtxMenu();
+    closeItemTooltip();
+  });
+
+  invGrid.addEventListener("mousemove", (e)=> showSlotTooltip(e, inv));
+  bankGrid.addEventListener("mousemove", (e)=> showSlotTooltip(e, bank));
+  invGrid.addEventListener("mouseleave", closeItemTooltip);
+  bankGrid.addEventListener("mouseleave", closeItemTooltip);
+  if (eqWeaponSlot){
+    eqWeaponSlot.addEventListener("mousemove", showElementTooltip);
+    eqWeaponSlot.addEventListener("mouseleave", closeItemTooltip);
+  }
+  if (eqOffhandSlot){
+    eqOffhandSlot.addEventListener("mousemove", showElementTooltip);
+    eqOffhandSlot.addEventListener("mouseleave", closeItemTooltip);
+  }
+  if (eqQuiverSlot){
+    eqQuiverSlot.addEventListener("mousemove", showElementTooltip);
+    eqQuiverSlot.addEventListener("mouseleave", closeItemTooltip);
+  }
 
   // ---------- Right-click on inventory items: Equip / Use / Drop ----------
   invGrid.addEventListener("contextmenu", (e) => {
@@ -2954,7 +3093,7 @@ if (toolId === "flint_steel" && targetId === "log") {
       depositFromInv(idx, 1);
       return;
     }
-    // Left-click food to eat
+    // Left-click food to eat.
     if (consumeFoodFromInv(idx)) return;
 
 
@@ -2976,6 +3115,12 @@ if (!handled || !sticky) setUseState(null);
 
 return;
 
+    }
+
+    // Left-click any equippable gear (weapon/offhand/armor) to equip.
+    if (canEquip(inv[idx].id)){
+      equipFromInv(idx);
+      return;
     }
   });
 
@@ -3086,6 +3231,18 @@ return;
   const charColorPill=document.getElementById("charColorPill");
   const charStart=document.getElementById("charStart");
   const classPick=document.getElementById("classPick");
+  const startOverlay = document.getElementById("startOverlay");
+  const startSaveStatus = document.getElementById("startSaveStatus");
+  const startSaveMeta = document.getElementById("startSaveMeta");
+  const startCharStatus = document.getElementById("startCharStatus");
+  const startCharMeta = document.getElementById("startCharMeta");
+  const startContinueBtn = document.getElementById("startContinueBtn");
+  const startNewGameBtn = document.getElementById("startNewGameBtn");
+  const startNewCharacterBtn = document.getElementById("startNewCharacterBtn");
+  const loadCharOverlay = document.getElementById("loadCharOverlay");
+  const loadCharList = document.getElementById("loadCharList");
+  const loadCharEmpty = document.getElementById("loadCharEmpty");
+  const loadCharCancel = document.getElementById("loadCharCancel");
 
   function setSelectedClass(cls){
     if (!CLASS_DEFS[cls]) cls = "Warrior";
@@ -3096,35 +3253,361 @@ return;
     charColorPill.textContent = CLASS_DEFS[characterState.selectedClass].color;
   }
 
-  function loadCharacterPrefs(){
-    const raw = localStorage.getItem(CHAR_KEY);
+  function makeCharacterId(){
+    const t = Date.now().toString(36);
+    const r = Math.random().toString(36).slice(2, 8);
+    return `char_${t}_${r}`;
+  }
+
+  function normalizeCharacter(raw){
+    if (!raw || typeof raw !== "object") return null;
+    const id = String(raw.id || "").trim();
+    const name = String(raw.name || "").trim().slice(0, 14);
+    const cls = String(raw.class || "");
+    if (!id || !name || !CLASS_DEFS[cls]) return null;
+    return {
+      id,
+      name,
+      class: cls,
+      color: CLASS_DEFS[cls].color,
+      updatedAt: Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0
+    };
+  }
+
+  function loadCharacterList(){
+    let raw = null;
+    try {
+      raw = localStorage.getItem(CHAR_LIST_KEY);
+    } catch {
+      return [];
+    }
+    if (!raw) return [];
+
+    let arr = null;
+    try {
+      arr = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(arr)) return [];
+
+    const seen = new Set();
+    const out = [];
+    for (const row of arr){
+      const c = normalizeCharacter(row);
+      if (!c) continue;
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
+    }
+    return out;
+  }
+
+  function saveCharacterList(list){
+    const clean = [];
+    const seen = new Set();
+    for (const row of (Array.isArray(list) ? list : [])){
+      const c = normalizeCharacter(row);
+      if (!c) continue;
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      clean.push(c);
+    }
+    try {
+      localStorage.setItem(CHAR_LIST_KEY, JSON.stringify(clean));
+    } catch {}
+  }
+
+  function getSaveKeyForCharId(charId){
+    return `${SAVE_KEY}::${charId}`;
+  }
+
+  function readSaveDataByCharId(charId){
+    if (!charId) return null;
+    let raw = null;
+    try {
+      raw = localStorage.getItem(getSaveKeyForCharId(charId));
+    } catch {
+      return null;
+    }
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    return { raw, data };
   }
 
-  function saveCharacterPrefs(){
-    localStorage.setItem(CHAR_KEY, JSON.stringify({
-      name: player.name,
-      class: player.class,
-      color: player.color
+  function persistActiveCharacterId(){
+    try {
+      if (activeCharacterId) localStorage.setItem(ACTIVE_CHAR_ID_KEY, activeCharacterId);
+      else localStorage.removeItem(ACTIVE_CHAR_ID_KEY);
+    } catch {}
+  }
+
+  function getCharacterById(charId){
+    if (!charId) return null;
+    return loadCharacterList().find(c => c.id === charId) ?? null;
+  }
+
+  function getActiveCharacterId(){
+    if (activeCharacterId && getCharacterById(activeCharacterId)) return activeCharacterId;
+
+    const list = loadCharacterList();
+    let savedId = null;
+    try {
+      savedId = localStorage.getItem(ACTIVE_CHAR_ID_KEY);
+    } catch {}
+
+    if (!savedId || !list.some(c => c.id === savedId)){
+      savedId = list[0]?.id ?? null;
+    }
+
+    activeCharacterId = savedId || null;
+    persistActiveCharacterId();
+    return activeCharacterId;
+  }
+
+  function setActiveCharacterId(charId){
+    if (!charId || !getCharacterById(charId)) {
+      activeCharacterId = null;
+    } else {
+      activeCharacterId = charId;
+    }
+    persistActiveCharacterId();
+  }
+
+  function ensureCharacterMigration(){
+    const list = loadCharacterList();
+    if (list.length){
+      getActiveCharacterId();
+      return;
+    }
+
+    let legacy = null;
+    try {
+      const raw = localStorage.getItem(CHAR_KEY);
+      legacy = raw ? JSON.parse(raw) : null;
+    } catch {}
+
+    let fromLegacy = null;
+    if (legacy?.name && legacy?.class && CLASS_DEFS[legacy.class]){
+      fromLegacy = {
+        id: makeCharacterId(),
+        name: String(legacy.name).trim().slice(0, 14) || "Adventurer",
+        class: legacy.class,
+        color: CLASS_DEFS[legacy.class].color,
+        updatedAt: Date.now()
+      };
+    } else {
+      let legacySave = null;
+      try {
+        legacySave = localStorage.getItem(SAVE_KEY);
+      } catch {}
+      if (legacySave){
+        try {
+          const d = JSON.parse(legacySave);
+          const nm = String(d?.player?.name || "").trim().slice(0, 14);
+          const cls = String(d?.player?.class || "");
+          if (nm && CLASS_DEFS[cls]){
+            fromLegacy = {
+              id: makeCharacterId(),
+              name: nm,
+              class: cls,
+              color: CLASS_DEFS[cls].color,
+              updatedAt: Date.now()
+            };
+          }
+        } catch {}
+      }
+    }
+
+    if (!fromLegacy) return;
+
+    saveCharacterList([fromLegacy]);
+    setActiveCharacterId(fromLegacy.id);
+
+    let oldSave = null;
+    try {
+      oldSave = localStorage.getItem(SAVE_KEY);
+    } catch {}
+    if (oldSave){
+      try {
+        localStorage.setItem(getSaveKeyForCharId(fromLegacy.id), oldSave);
+      } catch {}
+    }
+  }
+
+  function loadCharacterPrefs(){
+    const id = getActiveCharacterId();
+    return id ? getCharacterById(id) : null;
+  }
+
+  function saveCharacterPrefs(options = {}){
+    const createNew = !!options.createNew;
+    const list = loadCharacterList();
+    const cls = CLASS_DEFS[player.class] ? player.class : "Warrior";
+    const color = CLASS_DEFS[cls].color;
+    const name = (String(player.name || "Adventurer").trim().slice(0, 14) || "Adventurer");
+    const t = Date.now();
+
+    if (createNew){
+      const created = {
+        id: makeCharacterId(),
+        name,
+        class: cls,
+        color,
+        updatedAt: t
+      };
+      list.unshift(created);
+      saveCharacterList(list);
+      setActiveCharacterId(created.id);
+      return created;
+    }
+
+    const id = getActiveCharacterId();
+    const idx = list.findIndex(c => c.id === id);
+    if (idx >= 0){
+      list[idx] = { ...list[idx], name, class: cls, color, updatedAt: t };
+      saveCharacterList(list);
+      setActiveCharacterId(list[idx].id);
+      return list[idx];
+    }
+
+    const created = {
+      id: makeCharacterId(),
+      name,
+      class: cls,
+      color,
+      updatedAt: t
+    };
+    list.unshift(created);
+    saveCharacterList(list);
+    setActiveCharacterId(created.id);
+    return created;
+  }
+
+  function getCurrentSaveKey(){
+    const id = getActiveCharacterId();
+    return id ? getSaveKeyForCharId(id) : SAVE_KEY;
+  }
+
+  function getStoredCharacterProfile(charId = getActiveCharacterId()){
+    if (!charId) return null;
+    const saved = getCharacterById(charId);
+    if (!saved) return null;
+
+    const cls = saved.class;
+    const name = String(saved.name || "").trim().slice(0, 14);
+    if (!name || !cls || !CLASS_DEFS[cls]) return null;
+
+    return {
+      id: saved.id,
+      name,
+      class: cls,
+      color: CLASS_DEFS[cls].color
+    };
+  }
+
+  function getStoredSaveProfile(charId = getActiveCharacterId()){
+    const row = readSaveDataByCharId(charId);
+    if (!row?.data?.player) return null;
+    const data = row.data;
+    const cls = data.player.class;
+    const name = String(data.player.name || "Adventurer").slice(0, 14);
+    const hp = Math.max(0, data.player.hp | 0);
+    const maxHp = Math.max(1, data.player.maxHp | 0);
+    const savedAt = Number.isFinite(data.savedAt) ? data.savedAt : null;
+    const sx = data?.skills ?? {};
+    const combatLevel = Math.max(1, calcCombatLevelFromLevels({
+      accuracy: levelFromXP(sx.accuracy | 0),
+      power: levelFromXP(sx.power | 0),
+      defense: levelFromXP(sx.defense | 0),
+      ranged: levelFromXP(sx.ranged | 0),
+      sorcery: levelFromXP(sx.sorcery | 0),
+      health: levelFromXP(sx.health | 0),
     }));
+
+    return {
+      name,
+      class: (cls && CLASS_DEFS[cls]) ? cls : "Unknown",
+      hp,
+      maxHp,
+      savedAt,
+      combatLevel
+    };
   }
 
-  function openCharCreate(force=false){
+  function formatSavedAtLabel(savedAt){
+    if (!Number.isFinite(savedAt) || savedAt <= 0) return "Unknown time";
+    const d = new Date(savedAt);
+    if (Number.isNaN(d.getTime())) return "Unknown time";
+    return d.toLocaleString();
+  }
+
+  function closeLoadCharOverlay(){
+    if (!loadCharOverlay) return;
+    loadCharOverlay.style.display = "none";
+  }
+
+  function closeStartOverlay(){
+    if (!startOverlay) return;
+    startOverlay.style.display = "none";
+  }
+
+  function refreshStartOverlay(){
+    if (!startOverlay) return;
+
+    const charProfile = getStoredCharacterProfile();
+    const saveProfile = getStoredSaveProfile();
+
+    if (startCharStatus) startCharStatus.textContent = charProfile ? "Ready" : "No Character";
+    if (startCharMeta){
+      startCharMeta.textContent = charProfile
+        ? `${charProfile.name} the ${charProfile.class}${getActiveCharacterId() ? " (Active)" : ""}`
+        : "Create a character to start a new game.";
+    }
+
+    if (startSaveStatus) startSaveStatus.textContent = saveProfile ? "Available" : "No Save";
+    if (startSaveMeta){
+      startSaveMeta.textContent = saveProfile
+        ? `${saveProfile.name} the ${saveProfile.class} - HP ${saveProfile.hp}/${saveProfile.maxHp} - Saved ${formatSavedAtLabel(saveProfile.savedAt)}`
+        : "No save data found yet.";
+    }
+
+    if (startContinueBtn) startContinueBtn.disabled = !saveProfile;
+    if (startNewGameBtn) startNewGameBtn.textContent = charProfile ? "New Game" : "Create Character";
+  }
+
+  function openStartOverlay(){
+    if (!startOverlay) return;
+    refreshStartOverlay();
+    startOverlay.style.display = "flex";
+  }
+
+  let createNewCharacterPending = false;
+
+  function openCharCreate(force=false, createNew=false){
+    createNewCharacterPending = !!createNew;
     const saved = loadCharacterPrefs();
 
-    if (saved?.name) player.name = String(saved.name).slice(0,14);
-    if (saved?.class && CLASS_DEFS[saved.class]) player.class = saved.class;
-    if (saved?.color) player.color = saved.color;
+    if (!createNewCharacterPending){
+      if (saved?.name) player.name = String(saved.name).slice(0,14);
+      if (saved?.class && CLASS_DEFS[saved.class]) player.class = saved.class;
+      if (saved?.color) player.color = saved.color;
+    }
 
-    if (!force && saved?.class && saved?.name){
+    if (!createNewCharacterPending && !force && saved?.class && saved?.name){
       player.color = CLASS_DEFS[player.class]?.color ?? player.color;
       characterState.selectedClass = player.class;
       return false;
     }
 
-    charName.value = player.name || "Adventurer";
-    setSelectedClass(player.class || "Warrior");
+    charName.value = createNewCharacterPending ? "Adventurer" : (player.name || "Adventurer");
+    setSelectedClass(createNewCharacterPending ? "Warrior" : (player.class || "Warrior"));
     charOverlay.style.display="flex";
     return true;
   }
@@ -3134,6 +3617,94 @@ return;
     if (!btn) return;
     setSelectedClass(btn.dataset.class);
   });
+
+  function applyCharacterProfileToPlayer(charProfile){
+    if (!charProfile) return;
+    player.name = String(charProfile.name || "Adventurer").slice(0, 14);
+    player.class = (charProfile.class && CLASS_DEFS[charProfile.class]) ? charProfile.class : "Warrior";
+    player.color = CLASS_DEFS[player.class].color;
+  }
+
+  function deleteCharacterById(charId){
+    if (!charId) return false;
+    const before = loadCharacterList();
+    const next = before.filter(c => c.id !== charId);
+    if (next.length === before.length) return false;
+
+    saveCharacterList(next);
+    try {
+      localStorage.removeItem(getSaveKeyForCharId(charId));
+    } catch {}
+
+    if (getActiveCharacterId() === charId){
+      setActiveCharacterId(next[0]?.id ?? null);
+    }
+    return true;
+  }
+
+  function renderLoadCharacterList(onLoad){
+    if (!loadCharList) return;
+    const chars = loadCharacterList();
+    loadCharList.innerHTML = "";
+
+    let withSaveCount = 0;
+    const activeId = getActiveCharacterId();
+
+    for (const c of chars){
+      const save = getStoredSaveProfile(c.id);
+      if (save) withSaveCount++;
+
+      const row = document.createElement("div");
+      row.className = "loadCharRow";
+
+      const meta = document.createElement("div");
+      meta.className = "loadCharMeta";
+      const title = document.createElement("div");
+      title.className = "loadCharTitle";
+      title.textContent = `${c.name} the ${c.class}${c.id === activeId ? " (Active)" : ""}`;
+      meta.appendChild(title);
+
+      const sub = document.createElement("div");
+      sub.className = "loadCharSub";
+      sub.textContent = save
+        ? `Level ${save.combatLevel} - Saved ${formatSavedAtLabel(save.savedAt)}`
+        : "No save found for this character";
+      meta.appendChild(sub);
+
+      const actions = document.createElement("div");
+      actions.className = "btnrow";
+
+      const loadBtn = document.createElement("button");
+      loadBtn.type = "button";
+      loadBtn.textContent = "Load";
+      loadBtn.disabled = !save;
+      loadBtn.addEventListener("click", () => onLoad(c.id));
+      actions.appendChild(loadBtn);
+
+      row.appendChild(meta);
+      row.appendChild(actions);
+      loadCharList.appendChild(row);
+    }
+
+    if (loadCharEmpty){
+      loadCharEmpty.style.display = (withSaveCount > 0) ? "none" : "";
+    }
+  }
+
+  function openLoadCharacterOverlay(onLoad){
+    if (!loadCharOverlay) return;
+    renderLoadCharacterList(onLoad);
+    loadCharOverlay.style.display = "flex";
+  }
+
+  if (loadCharCancel){
+    loadCharCancel.addEventListener("click", closeLoadCharOverlay);
+  }
+  if (loadCharOverlay){
+    loadCharOverlay.addEventListener("mousedown", (e) => {
+      if (e.target === loadCharOverlay) closeLoadCharOverlay();
+    });
+  }
 
   // ---------- Starting inventory + equipment ----------
   function applyStartingInventory(){
@@ -3150,6 +3721,7 @@ return;
 
     addToInventory("axe", 1);
     addToInventory("pick", 1);
+    addToInventory("hammer", 1);
     addToInventory("knife", 1);
     addToInventory("flint_steel", 1);
 
@@ -3186,9 +3758,176 @@ return;
   function openDeleteConfirm(){ deleteCharOverlay.style.display="flex"; }
   function closeDeleteConfirm(){ deleteCharOverlay.style.display="none"; }
 
+  function clearZoneRuntime(zoneKey){
+    const zone = getZoneState(zoneKey);
+    if (!zone) return;
+    zone.resources.length = 0;
+    zone.mobs.length = 0;
+    zone.interactables.length = 0;
+    zone.groundLoot.clear();
+    zone.manualDropLocks.clear();
+  }
+
+  function clearAllZoneRuntime(){
+    clearZoneRuntime(ZONE_KEYS.OVERWORLD);
+    clearZoneRuntime(ZONE_KEYS.DUNGEON);
+  }
+
+  function withZone(zoneKey, fn){
+    const prev = getActiveZone();
+    const next = (zoneKey === ZONE_KEYS.DUNGEON) ? ZONE_KEYS.DUNGEON : ZONE_KEYS.OVERWORLD;
+    const changed = (prev !== next);
+    if (changed) {
+      setActiveZone(next);
+      rebuildNavigation();
+    }
+    try {
+      return fn();
+    } finally {
+      if (changed) {
+        setActiveZone(prev);
+        rebuildNavigation();
+      }
+    }
+  }
+
+  function dungeonLayoutSignature(layout){
+    return layout
+      .map((s) => `${s.type}:${s.x},${s.y}`)
+      .sort()
+      .join("|");
+  }
+
+  function migrateDungeonLegacyMobLayout(){
+    const sig = dungeonLayoutSignature(
+      mobs.map((m) => ({
+        type: String(m.type || ""),
+        x: (Number.isFinite(m.homeX) ? m.homeX : m.x) | 0,
+        y: (Number.isFinite(m.homeY) ? m.homeY : m.y) | 0
+      }))
+    );
+    const legacySigs = DUNGEON_LEGACY_MOB_LAYOUTS.map(dungeonLayoutSignature);
+    if (!legacySigs.includes(sig)) return false;
+
+    const byType = new Map();
+    for (let i = 0; i < mobs.length; i++) {
+      const m = mobs[i];
+      const k = String(m.type || "");
+      if (!byType.has(k)) byType.set(k, []);
+      byType.get(k).push(i);
+    }
+    for (const idxs of byType.values()) {
+      idxs.sort((a, b) => {
+        const ma = mobs[a];
+        const mb = mobs[b];
+        const ax = (Number.isFinite(ma.homeX) ? ma.homeX : ma.x) | 0;
+        const ay = (Number.isFinite(ma.homeY) ? ma.homeY : ma.y) | 0;
+        const bx = (Number.isFinite(mb.homeX) ? mb.homeX : mb.x) | 0;
+        const by = (Number.isFinite(mb.homeY) ? mb.homeY : mb.y) | 0;
+        return (ay - by) || (ax - bx);
+      });
+    }
+
+    for (const spot of DUNGEON_DEFAULT_MOB_SPAWNS) {
+      const bucket = byType.get(spot.type);
+      if (!bucket || !bucket.length) continue;
+      const idx = bucket.shift();
+      const m = mobs[idx];
+      m.homeX = spot.x | 0;
+      m.homeY = spot.y | 0;
+      m.target = null;
+      m.provokedUntil = 0;
+      m.aggroUntil = 0;
+      m.attackCooldownUntil = 0;
+      m.moveCooldownUntil = 0;
+      if (m.alive) {
+        m.x = m.homeX;
+        m.y = m.homeY;
+      }
+    }
+    return true;
+  }
+
+  function seedDungeonZone(options = {}){
+    const forcePopulateMobs = !!options.forcePopulateMobs;
+    const migrateLegacyPositions = !!options.migrateLegacyPositions;
+    withZone(ZONE_KEYS.DUNGEON, () => {
+      resources.length = 0;
+      if (!interactables.some((it) => it.type === "ladder_up")) {
+        placeInteractable("ladder_up", DUNGEON_LADDER_UP.x, DUNGEON_LADDER_UP.y);
+      }
+
+      if (forcePopulateMobs) mobs.length = 0;
+      if (!mobs.length) {
+        for (const spot of DUNGEON_DEFAULT_MOB_SPAWNS) {
+          placeMob(spot.type, spot.x, spot.y);
+        }
+      } else if (migrateLegacyPositions) {
+        migrateDungeonLegacyMobLayout();
+      }
+    });
+  }
+
+  function useLadder(direction){
+    if (direction === "down") {
+      if (getActiveZone() !== ZONE_KEYS.OVERWORLD) return false;
+      setCurrentZone(ZONE_KEYS.DUNGEON, { syncCamera: false });
+      teleportPlayerTo(DUNGEON_SPAWN_TILE.x, DUNGEON_SPAWN_TILE.y, { requireWalkable: true, invulnMs: 900 });
+      chatLine(`<span class="muted">You climb down the ladder into a dungeon.</span>`);
+      return true;
+    }
+    if (direction === "up") {
+      if (getActiveZone() !== ZONE_KEYS.DUNGEON) return false;
+      setCurrentZone(ZONE_KEYS.OVERWORLD, { syncCamera: false });
+      teleportPlayerTo(OVERWORLD_RETURN_TILE.x, OVERWORLD_RETURN_TILE.y, { requireWalkable: true, invulnMs: 900 });
+      chatLine(`<span class="muted">You climb up and return to the surface.</span>`);
+      return true;
+    }
+    return false;
+  }
+
+  function setCurrentZone(zoneKey, options = {}){
+    const prev = getActiveZone();
+    if (!setActiveZone(zoneKey)) return false;
+    rebuildNavigation();
+
+    if (!options.keepTarget) player.target = null;
+    if (!options.keepPath) player.path = [];
+    if (!options.keepAction) {
+      player.action = { type: "idle", endsAt: 0, total: 0, label: "Idle", onComplete: null };
+    }
+
+    if (options.syncCamera !== false) updateCamera();
+    return prev !== getActiveZone();
+  }
+
+  function defaultSpawnForZone(zoneKey){
+    if (zoneKey === ZONE_KEYS.DUNGEON) return { x: DUNGEON_SPAWN_TILE.x, y: DUNGEON_SPAWN_TILE.y };
+    return { x: startCastle.x0 + 6, y: startCastle.y0 + 4 };
+  }
+
+  function teleportPlayerTo(tx, ty, options = {}){
+    const x = tx | 0;
+    const y = ty | 0;
+    if (!inBounds(x, y)) return false;
+    if (options.requireWalkable !== false && !isWalkable(x, y)) return false;
+
+    player.x = x;
+    player.y = y;
+    player.path = [];
+    player.target = null;
+    player.action = { type: "idle", endsAt: 0, total: 0, label: "Idle", onComplete: null };
+    syncPlayerPix();
+
+    if (options.invulnMs > 0) player.invulnUntil = now() + (options.invulnMs | 0);
+    updateCamera();
+    return true;
+  }
+
   function resetCharacter(){
-    localStorage.removeItem(SAVE_KEY);
-    localStorage.removeItem(CHAR_KEY);
+    const deletedId = getActiveCharacterId();
+    deleteCharacterById(deletedId);
+    refreshStartOverlay();
 
     for (const k of Object.keys(Skills)) Skills[k].xp = 0;
     clearSlots(inv);
@@ -3199,8 +3938,8 @@ return;
     equipment.weapon = null;
     equipment.offhand = null;
 
-    groundLoot.clear();
-manualDropLocks.clear();
+    setCurrentZone(ZONE_KEYS.OVERWORLD, { keepAction: true, keepPath: true, keepTarget: true, syncCamera: false });
+    clearAllZoneRuntime();
 
 
     player.path = [];
@@ -3222,8 +3961,6 @@ manualDropLocks.clear();
     renderQuiver();
     renderHPHUD();
     updateCamera();
-
-    openCharCreate(true);
   }
 
   deleteCharBtn.onclick = openDeleteConfirm;
@@ -3232,11 +3969,20 @@ manualDropLocks.clear();
   deleteCharConfirm.onclick = () => {
     closeDeleteConfirm();
     resetCharacter();
+    refreshStartOverlay();
+    const next = getStoredCharacterProfile();
+    if (next){
+      applyCharacterProfileToPlayer(next);
+      openStartOverlay();
+    } else {
+      openCharCreate(true, true);
+    }
     chatLine(`<span class="warn">Character deleted.</span>`);
   };
 
   newCharBtn.onclick = () => {
-    openCharCreate(true);
+    refreshStartOverlay();
+    openCharCreate(true, true);
   };
 
   // ---------- World + flow ----------
@@ -3253,8 +3999,8 @@ initWorldSeed();
     clearSlots(bank);
     quiver.wooden_arrow = 0;
     wallet.gold = 0;
-    groundLoot.clear();
-manualDropLocks.clear();
+    setCurrentZone(ZONE_KEYS.OVERWORLD, { keepAction: true, keepPath: true, keepTarget: true, syncCamera: false });
+    clearAllZoneRuntime();
 
 
 
@@ -3266,6 +4012,7 @@ manualDropLocks.clear();
     seedResources();
     seedMobs();
     seedInteractables();
+    seedDungeonZone({ forcePopulateMobs: true });
 
     player.x = startCastle.x0 + 6;
     player.y = startCastle.y0 + 4;
@@ -3289,12 +4036,42 @@ player.invulnUntil = now() + 1200;
     updateCamera();
   }
 
+  if (startNewGameBtn){
+    startNewGameBtn.onclick = () => {
+      const charProfile = getStoredCharacterProfile();
+      if (!charProfile){
+        closeStartOverlay();
+        openCharCreate(true, true);
+        return;
+      }
+
+      applyCharacterProfileToPlayer(charProfile);
+
+      closeStartOverlay();
+      startNewGame();
+      chatLine(`<span class="good">Starting a new game for ${player.name} the ${player.class}.</span>`);
+    };
+  }
+
+  if (startNewCharacterBtn){
+    startNewCharacterBtn.onclick = () => {
+      closeStartOverlay();
+      openCharCreate(true, true);
+    };
+  }
+
   charStart.onclick = () => {
     player.name = (charName.value || "Adventurer").trim().slice(0,14) || "Adventurer";
     player.class = characterState.selectedClass;
     player.color = CLASS_DEFS[characterState.selectedClass].color;
 
-    saveCharacterPrefs();
+    const created = saveCharacterPrefs({ createNew: createNewCharacterPending });
+    if (created?.id){
+      setActiveCharacterId(created.id);
+    }
+    createNewCharacterPending = false;
+    refreshStartOverlay();
+    closeStartOverlay();
     charOverlay.style.display="none";
 
     startNewGame();
@@ -3302,1015 +4079,135 @@ player.invulnUntil = now() + 1200;
   };
 
   // ---------- Entity lookup ----------
-function getEntityAt(tx, ty){
-  // Interactables
-  const idx = interactables.findIndex(it => it.x===tx && it.y===ty);
-  if (idx !== -1){
-    const it = interactables[idx];
-    if (it.type === "fire")   return { kind:"fire", index: idx, label:"Campfire", x:it.x, y:it.y };
-    if (it.type === "bank")   return { kind:"bank", index: idx, label:"Bank Chest", x:it.x, y:it.y };
-    if (it.type === "vendor") return { kind:"vendor", index: idx, label:"Vendor", x:it.x, y:it.y };
-    if (it.type === "fish") return { kind:"fish", index: idx, label:"Fishing Spot", x:it.x, y:it.y };
-if (it.type === "furnace") return { kind:"furnace", index: idx, label:"Furnace", x:it.x, y:it.y };
-if (it.type === "anvil")   return { kind:"anvil", index: idx, label:"Anvil", x:it.x, y:it.y };
+  const getEntityAt = createEntityLookup({
+    interactables,
+    getDecorAt,
+    mobs,
+    resources
+  });
 
-
+  let ensureWalkIntoRangeAndActImpl = () => {};
+  function ensureWalkIntoRangeAndAct(){
+    return ensureWalkIntoRangeAndActImpl();
   }
 
-  // Visual decorations (hover / examine only)
-  const decor = getDecorAt(tx, ty);
-  if (decor){
-    return { kind:"decor", label: decor.label, decorId: decor.id, x: tx, y: ty };
-  }
-
-  // Mobs
-  const mobIndex = mobs.findIndex(m => m.alive && m.x===tx && m.y===ty);
-  if (mobIndex>=0){
-  const m = mobs[mobIndex];
-  const name = m?.name ?? "Rat";
-  const lvl  = m?.combatLevel ?? 1;
-  return { kind:"mob", index: mobIndex, label:`${name} (Lvl ${lvl})`, level:lvl };
-}
-
-
-  // Resources
-  const resIndex = resources.findIndex(r => r.alive && r.x===tx && r.y===ty);
-  if (resIndex>=0){
-    const r=resources[resIndex];
-    return { kind:"res", index: resIndex, label: r.type==="tree" ? "Tree" : "Rock" };
-  }
-
-  return null;
-}
-
-  function examineEntity(ent){
-    if (!ent) return;
-    if (ent.kind==="mob"){
-      const m = mobs[ent.index];
-      if (m?.type === "goblin"){
-        chatLine(`<span class="muted">A mean little goblin with scavenged gear.</span>`);
-      } else {
-        chatLine(`<span class="muted">It's a small, scrappy rat.</span>`);
-      }
-    }
-    if (ent.kind==="res" && ent.label==="Tree") chatLine(`<span class="muted">A sturdy tree. Looks good for logs.</span>`);
-    if (ent.kind==="res" && ent.label==="Rock") chatLine(`<span class="muted">A mineral rock. Might contain ore.</span>`);
-    if (ent.kind==="bank") chatLine(`<span class="muted">A secure bank chest.</span>`);
-    if (ent.kind==="vendor") chatLine(`<span class="muted">A traveling vendor. Buys and sells goods.</span>`);
-    if (ent.kind==="fire") chatLine(`<span class="muted">A warm campfire. Great for cooking.</span>`);
-if (ent.kind==="fish") chatLine(`<span class="muted">A bubbling fishing spot in the river.</span>`);
-if (ent.kind==="furnace") chatLine(`<span class="muted">A sturdy furnace. Smithing is coming soon.</span>`);
-if (ent.kind==="anvil")   chatLine(`<span class="muted">A heavy anvil. You'll use it to forge gear later.</span>`);
-if (ent.kind==="decor"){
-  const msg = DECOR_EXAMINE_TEXT[ent.decorId] ?? `A ${String(ent.label || "decoration").toLowerCase()}.`;
-  chatLine(`<span class="muted">${msg}</span>`);
-}
-
-
-
-
-
-  }
-
-  function beginInteraction(ent){
-    closeCtxMenu();
-    if (ent?.kind === "decor"){
-      examineEntity(ent);
-      return;
-    }
-    player.action = { type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null };
-    player.target = { kind: ent.kind, index: ent.index };
-    ensureWalkIntoRangeAndAct();
-  }
-
-   // ---------- Interaction helpers ----------
-  function clickToInteract(tileX,tileY){
-    // RS-style: Firemaking is inventory-driven (Use Flint & Steel on a Log in inventory).
-    // World clicks do not place fires directly.
-
-    const ent = getEntityAt(tileX,tileY);
-    if (ent){
-      // Decorations are hover/examine-only; left-click should still move.
-      if (ent.kind !== "decor"){
-        beginInteraction(ent);
-        return;
-      }
-    }
-
-    player.target = null;
-    player.action = {type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
-    setPathTo(tileX,tileY);
-  }
+  // ---------- Interaction helpers ----------
+  const { examineEntity, beginInteraction, clickToInteract } = createInteractionHelpers({
+    chatLine,
+    mobs,
+    DECOR_EXAMINE_TEXT,
+    closeCtxMenu,
+    player,
+    ensureWalkIntoRangeAndAct,
+    setPathTo,
+    getEntityAt
+  });
 
 
   // ---------- Combat + actions ----------
-  function spawnGatherParticles(kind, tx, ty){
-    const center = tileCenter(tx,ty);
-    for (let i=0;i<6;i++){
-      gatherParticles.push({
-        kind,
-        x:center.cx + (Math.random()*10-5),
-        y:center.cy + (Math.random()*10-5),
-        vx:(Math.random()*60-30),
-        vy:(Math.random()*60-30),
-        born: now(),
-        life: 350 + Math.random()*250
-      });
-
-    }
-  }
-
-  function spawnCombatFX(kind, tx, ty){
-    const a = { x: player.px, y: player.py };
-    const b = tileCenter(tx,ty);
-    if (kind === "slash"){
-      combatFX.push({
-        kind,
-        x0:a.x, y0:a.y,
-        x1:b.cx, y1:b.cy,
-        born: now(),
-        life: 220
-      });
-    } else if (kind === "arrow"){
-      combatFX.push({
-        kind,
-        x0:a.x, y0:a.y,
-        x1:b.cx, y1:b.cy,
-        born: now(),
-        life: 320
-      });
-    } else if (kind === "bolt"){
-      combatFX.push({
-        kind,
-        x0:a.x, y0:a.y,
-        x1:b.cx, y1:b.cy,
-        born: now(),
-        life: 300
-      });
-    }
-  }
-// ---------- Combat math / rolls ----------
-function lvlOf(skillKey){ return levelFromXP(Skills[skillKey]?.xp ?? 0); }
-function mobLvl(m, key){ return (m?.levels?.[key] ?? 1) | 0; }
-
-// simple â€œRS-likeâ€ feel: accuracy vs defense, clamped so nothing is 100%
-function calcHitChance(att, def){
-  const a = Math.max(1, att|0);
-  const d = Math.max(1, def|0);
-  return clamp(a / (a + d), 0.10, 0.90);
-}
-function rollHit(att, def){ return Math.random() < calcHitChance(att, def); }
-
-function maxHitFromOffense(off){
-  const o = Math.max(1, off|0);
-  return Math.max(1, 1 + Math.floor((o + 2) / 3)); // lvl 1â€“2 can hit 2
-}
-function rollDamageUpTo(maxHit){
-  const mh = Math.max(1, maxHit|0);
-  return 1 + Math.floor(Math.random() * mh); // 1..maxHit
-}
-
-
-
-function rollPlayerAttack(style, mob){
-  const mobDef = mobLvl(mob, "defense");
-
-  let att = lvlOf("accuracy");
-  let off = lvlOf("power");
-
-  if (style === "ranged"){
-    att = lvlOf("ranged");
-    off = att;
-  } else if (style === "magic"){
-    att = lvlOf("sorcery");
-    off = att;
-  }
-
-  const maxHit = maxHitFromOffense(off);
-  const hit = rollHit(att, mobDef);
-  const dmg = hit ? rollDamageUpTo(maxHit) : 0;
-
-  return { hit, dmg, maxHit };
-}
-
-function rollMobAttack(mob){
-  const def = (MOB_DEFS[mob.type] ?? {});
-  const att = mobLvl(mob, "accuracy");
-  const off = mobLvl(mob, "power");
-  const playerDef = lvlOf("defense");
-
-  const hit = rollHit(att, playerDef);
-  const maxHit = Math.max(1, (def.maxHit ?? maxHitFromOffense(off)));
-  const dmg = hit ? rollDamageUpTo(maxHit) : 0;
-  return { hit, dmg, maxHit };
-}
-
-function mobTileWalkable(nx, ny){
-  if (!isWalkable(nx, ny)) return false;
-  // donâ€™t stand on solid interactables/resources
-  if (resources.some(r => r.alive && r.x===nx && r.y===ny)) return false;
-  if (interactables.some(it => it.x===nx && it.y===ny && it.type!=="fire")) return false;
-  return true;
-}
-
-function mobStepToward(mob, tx, ty){
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
-  const curH = Math.abs(tx - mob.x) + Math.abs(ty - mob.y);
-  let best = null;
-  let bestH = curH;
-
-  for (const [dx,dy] of dirs){
-    const nx = mob.x + dx, ny = mob.y + dy;
-    if (!mobTileWalkable(nx, ny)) continue;
-    if (nx===player.x && ny===player.y) continue;
-    if (mobs.some(o => o !== mob && o.alive && o.x===nx && o.y===ny)) continue;
-
-    const h = Math.abs(tx - nx) + Math.abs(ty - ny);
-    if (h < bestH){
-      bestH = h;
-      best = {x:nx, y:ny};
-    }
-  }
-
-  if (best){
-    mob.x = best.x;
-    mob.y = best.y;
-    return true;
-  }
-  return false;
-}
-
-function findBestMeleeEngagePath(mob){
-  const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-    .map(([dx,dy]) => ({ x: mob.x + dx, y: mob.y + dy }))
-    .filter(p => isWalkable(p.x, p.y));
-
-  if (!adj.length) return null;
-
-  let best = null;
-  for (const p of adj){
-    const path = astar(player.x, player.y, p.x, p.y);
-    if (!path) continue;
-    if (path.some(n => n.x === mob.x && n.y === mob.y)) continue;
-    if (!best || path.length < best.path.length){
-      best = { x: p.x, y: p.y, path };
-    }
-  }
-  return best;
-}
-
-function pushMobOffPlayerTile(mob){
-  if (!mob || !mob.alive) return false;
-  if (player.x !== mob.x || player.y !== mob.y) return false;
-  const dirs4 = [[1,0],[-1,0],[0,1],[0,-1]];
-  const dirs8 = [[1,1],[1,-1],[-1,1],[-1,-1]];
-  const candidates = dirs4.concat(dirs8);
-
-  for (const [dx, dy] of candidates){
-    const nx = mob.x + dx, ny = mob.y + dy;
-    if (!mobTileWalkable(nx, ny)) continue;
-    if (nx === player.x && ny === player.y) continue;
-    if (mobs.some(o => o !== mob && o.alive && o.x===nx && o.y===ny)) continue;
-    mob.x = nx; mob.y = ny;
-    const c = tileCenter(nx, ny);
-    mob.px = c.cx; mob.py = c.cy;
-    return true;
-  }
-
-  // Fallback: if surrounded by mobs, still move off player even if it stacks with another mob.
-  for (const [dx, dy] of candidates){
-    const nx = mob.x + dx, ny = mob.y + dy;
-    if (!mobTileWalkable(nx, ny)) continue;
-    if (nx === player.x && ny === player.y) continue;
-    mob.x = nx; mob.y = ny;
-    const c = tileCenter(nx, ny);
-    mob.px = c.cx; mob.py = c.cy;
-    return true;
-  }
-
-  // Final fallback for boxed-in edge cases: snap back to home tile.
-  if (Number.isFinite(mob.homeX) && Number.isFinite(mob.homeY)){
-    const hx = mob.homeX|0, hy = mob.homeY|0;
-    if (mobTileWalkable(hx, hy) && !(hx === player.x && hy === player.y)){
-      mob.x = hx; mob.y = hy;
-      const c = tileCenter(hx, hy);
-      mob.px = c.cx; mob.py = c.cy;
-      return true;
-    }
-  }
-  return false;
-}
-
-function resolveMeleeTileOverlap(mob){
-  if (!mob || !mob.alive) return false;
-  if (player.x !== mob.x || player.y !== mob.y) return false;
-  if (pushMobOffPlayerTile(mob)) return true;
-
-  stopAction();
-  return true;
-}
-
-// death penalty + respawn (tweak as you like)
-function handlePlayerDeath(){
-  const dx = player.x, dy = player.y;
-
-  // drop 25% gold at death tile
-  const lost = Math.max(0, Math.floor(getGold() * 0.25));
-  if (lost > 0){
-    wallet.gold = Math.max(0, (wallet.gold|0) - lost);
-    renderGold();
-    addGroundLoot(dx, dy, GOLD_ITEM_ID, lost);
-  }
-
-  chatLine(`<span class="warn">You have died.</span>`);
-
-  player.hp = player.maxHp;
-  player.x = startCastle.x0 + 6;
-  player.y = startCastle.y0 + 4;
-  player.path = [];
-  player.target = null;
-  player.action = {type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
-
-  player.attackCooldownUntil = now() + 800;
-  player.invulnUntil = now() + 2500; // spawn protection
-  syncPlayerPix();
-}
-
-function updateMobsAI(dt){
-  const t = now();
-  if (t < (player.invulnUntil || 0)) return;
-
-  // safe zone around starter castle
-  const playerSafe = inRectMargin(player.x, player.y, startCastle, 1);
-
-  for (let i=0; i<mobs.length; i++){
-    const m = mobs[i];
-    if (!m.alive) continue;
-
-    // backfill older saves
-    if (!Number.isFinite(m.homeX) || !Number.isFinite(m.homeY)){
-      m.homeX = m.x; m.homeY = m.y;
-    }
-    if (!Number.isFinite(m.provokedUntil)) m.provokedUntil = 0;
-    if (!Number.isFinite(m.aggroUntil)) m.aggroUntil = 0;
-    if (!Number.isFinite(m.attackCooldownUntil)) m.attackCooldownUntil = 0;
-    if (!Number.isFinite(m.moveCooldownUntil)) m.moveCooldownUntil = 0;
-
-    // pixel smoothing state
-    if (!Number.isFinite(m.px) || !Number.isFinite(m.py)){
-      const c = tileCenter(m.x, m.y);
-      m.px = c.cx; m.py = c.cy;
-    }
-
-    const def = MOB_DEFS[m.type] ?? {};
-    const typeKey = String(m.type || "").toLowerCase();
-    const aggroRange  = Number.isFinite(def.aggroRange) ? def.aggroRange : 4.0;
-    const leash       = Number.isFinite(def.leash) ? def.leash : 7.0;
-    const attackRange = Number.isFinite(def.attackRange) ? def.attackRange : 1.15;
-    const atkSpeed    = Number.isFinite(def.attackSpeedMs) ? def.attackSpeedMs : 1300;
-
-    // key change: passive mobs wonâ€™t aggro unless hit
-    const aggroOnSight = (typeKey === "rat") ? false : (def.aggroOnSight !== false);
-
-    // smooth motion toward current tile center
-    const moveSpeed = Number.isFinite(def.moveSpeed) ? def.moveSpeed : 140; // px/sec
-    const c2 = tileCenter(m.x, m.y);
-    const mcx = c2.cx, mcy = c2.cy;
-    const dPix = dist(m.px, m.py, mcx, mcy);
-    if (dPix > 0.5){
-      const step = moveSpeed * dt;
-      m.px += ((mcx - m.px) / dPix) * Math.min(step, dPix);
-      m.py += ((mcy - m.py) / dPix) * Math.min(step, dPix);
-    } else {
-      m.px = mcx; m.py = mcy;
-    }
-
-    const dToPlayer      = tilesBetweenTiles(m.x, m.y, player.x, player.y);
-    const dFromHome      = tilesBetweenTiles(m.x, m.y, m.homeX, m.homeY);
-    const dPlayerFromHome= tilesBetweenTiles(player.x, player.y, m.homeX, m.homeY);
-
-    const provoked = (t < m.provokedUntil);
-    const engaged = (m.target === "player" && t < m.aggroUntil && (aggroOnSight || provoked));
-    const playerTargetingThis = (player.target?.kind === "mob" && player.target.index === i);
-
-    // Only resolve overlap while this mob is actually in combat with the player.
-    if (m.x === player.x && m.y === player.y){
-      if (m.target === "player" || playerTargetingThis){
-        pushMobOffPlayerTile(m);
-        if (m.x === player.x && m.y === player.y){
-          m.target = null;
-          m.aggroUntil = 0;
-        }
-      }
-      continue;
-    }
-
-    // Acquire aggro from sight (aggressive mobs) or recent provocation (passive mobs).
-    if (!engaged){
-      if ((aggroOnSight || provoked) && !playerSafe && dToPlayer <= aggroRange){
-        m.target = "player";
-        m.aggroUntil = t + 12000;
-      } else if (dFromHome > 0.05){
-        // drift home if displaced
-        if (t >= m.moveCooldownUntil){
-          m.moveCooldownUntil = t + 420;
-          mobStepToward(m, m.homeX, m.homeY);
-        }
-      }
-           continue;
-    }
-
-    // leash / safe-zone break
-    if (playerSafe || dFromHome > leash || dPlayerFromHome > leash){
-      m.target = null;
-      m.provokedUntil = 0;
-      m.aggroUntil = 0;
-      continue;
-    }
-
-    // keep aggro alive while nearby
-    if (dToPlayer <= aggroRange + 1.0){
-      m.aggroUntil = t + 12000;
-      if (!aggroOnSight) m.provokedUntil = t + 12000;
-    }
-
-    const tileAdjacent = (Math.abs(player.x - m.x) <= 1 && Math.abs(player.y - m.y) <= 1);
-
-    // Move into range
-    if (dToPlayer > attackRange && !tileAdjacent){
-      if (t >= m.moveCooldownUntil){
-        m.moveCooldownUntil = t + 420;
-        mobStepToward(m, player.x, player.y);
-      }
-      continue;
-    }
-
-    // Attack
-    if (t < m.attackCooldownUntil) continue;
-    m.attackCooldownUntil = t + atkSpeed;
-    // Brief post-swing pause so mobs don't immediately step again after attacking.
-    m.moveCooldownUntil = Math.max(m.moveCooldownUntil, t + Math.max(420, Math.floor(atkSpeed * 0.55)));
-
-    const roll = rollMobAttack(m);
-    if (roll.dmg <= 0){
-      chatLine(`<span class="muted">${m.name} misses you.</span>`);
-      continue;
-    }
-
-    player.hp = clamp(player.hp - roll.dmg, 0, player.maxHp);
-    chatLine(`<span class="warn">${m.name} hits you for <b>${roll.dmg}</b>.</span>`);
-
-    // Do not auto-set a combat target here; it can cause involuntary movement.
-  }
-}
-
-
-  function updateFX(){
-    const t=now();
-    // gather
-    for (let i=gatherParticles.length-1;i>=0;i--){
-      const p=gatherParticles[i];
-      if ((t - p.born) >= p.life){ gatherParticles.splice(i,1); continue; }
-      const dt = 1/60;
-      p.x += p.vx*dt;
-      p.y += p.vy*dt;
-      p.vy += 80*dt;
-      p.vx *= 0.96;
-      p.vy *= 0.96;
-    }
-    // combat
-    for (let i=combatFX.length-1;i>=0;i--){
-      const fx=combatFX[i];
-      if ((t - fx.born) >= fx.life){ combatFX.splice(i,1); }
-    }
-  }
-
-  function drawFX(){
-    const t=now();
-
-    // gather particles
-    for (const p of gatherParticles){
-      const age=(t-p.born)/p.life;
-      const a = clamp(1-age,0,1);
-      if (p.kind==="wood") ctx.fillStyle=`rgba(253, 230, 138, ${0.55*a})`;
-      else ctx.fillStyle=`rgba(226, 232, 240, ${0.55*a})`;
-      ctx.fillRect(p.x-1.5, p.y-1.5, 3, 3);
-    }
-
-    // combat FX
-    for (const fx of combatFX){
-      const age = clamp((t - fx.born) / fx.life, 0, 1);
-      const a = clamp(1 - age, 0, 1);
-
-      if (fx.kind === "slash"){
-        const mx = (fx.x0 + fx.x1)/2;
-        const my = (fx.y0 + fx.y1)/2;
-        const dx = fx.x1 - fx.x0;
-        const dy = fx.y1 - fx.y0;
-        const len = Math.hypot(dx,dy) || 1;
-        const nx = -dy/len;
-        const ny = dx/len;
-        const bend = 14 * Math.sin(age * Math.PI);
-
-        ctx.strokeStyle = `rgba(251, 191, 36, ${0.70*a})`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(fx.x0, fx.y0);
-        ctx.quadraticCurveTo(mx + nx*bend, my + ny*bend, fx.x1, fx.y1);
-        ctx.stroke();
-        ctx.lineWidth = 1;
-      }
-
-      if (fx.kind === "arrow" || fx.kind === "bolt"){
-        const p = age;
-        const x = fx.x0 + (fx.x1 - fx.x0) * p;
-        const y = fx.y0 + (fx.y1 - fx.y0) * p;
-
-        const dx = fx.x1 - fx.x0;
-        const dy = fx.y1 - fx.y0;
-        const ang = Math.atan2(dy, dx);
-
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(ang);
-
-        if (fx.kind === "arrow"){
-          ctx.strokeStyle = `rgba(226, 232, 240, ${0.85*a})`;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(-10,0); ctx.lineTo(8,0);
-          ctx.stroke();
-          ctx.fillStyle = `rgba(148, 163, 184, ${0.85*a})`;
-          ctx.beginPath();
-          ctx.moveTo(8,0); ctx.lineTo(3,-3); ctx.lineTo(3,3); ctx.closePath();
-          ctx.fill();
-          ctx.lineWidth = 1;
-        } else {
-          ctx.strokeStyle = `rgba(34, 211, 238, ${0.85*a})`;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(-10,0); ctx.lineTo(10,0);
-          ctx.stroke();
-
-          ctx.strokeStyle = `rgba(255,255,255, ${0.60*a})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(-8,-3); ctx.lineTo(6,-3);
-          ctx.moveTo(-8,3); ctx.lineTo(6,3);
-          ctx.stroke();
-          ctx.lineWidth = 1;
-        }
-        ctx.restore();
-      }
-    }
-  }
-
-function ensureWalkIntoRangeAndAct(){
-  const t = player.target;
-  if (!t) return;
-
-  // ---------- BANK ----------
-  if (t.kind === "bank"){
-    const b = interactables[t.index];
-    if (!b) return stopAction();
-
-    if (!inRangeOfTile(b.x, b.y, 1.1)){
-      const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-        .map(([dx,dy])=>({x:b.x+dx,y:b.y+dy}))
-        .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction("No path to bank.");
-      adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      setPathTo(adj[0].x, adj[0].y);
-      return;
-    }
-
-    if (player.action.type !== "idle") return;
-
-    chatLine(`<span class="muted">You open the bank chest.</span>`);
-    availability.bank = true;
-    updateBankIcon();
-
-    openWindow("bank");
-    stopAction();
-    return;
-  }
-   // ---------- VENDOR (TRADE) ----------
-  if (t.kind === "vendor"){
-
-    const v = interactables[t.index];
-    if (!v) return stopAction();
-
-    if (!inRangeOfTile(v.x, v.y, 1.1)){
-      const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-        .map(([dx,dy])=>({x:v.x+dx,y:v.y+dy}))
-        .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction(`No path to vendor.`);
-      adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      setPathTo(adj[0].x, adj[0].y);
-      return;
-    }
-
-    if (player.action.type !== "idle") return;
-
-    chatLine(`<span class="muted">You start trading.</span>`);
-    openWindow("vendor");
-    renderVendorUI();
-
-    stopAction();
-    return;
-  }
-  
-
-// ---------- FURNACE ----------
-if (t.kind === "furnace"){
-  const fz = interactables[t.index];
-  if (!fz) return stopAction();
-
-  if (!inRangeOfTile(fz.x, fz.y, 1.1)){
-    const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-      .map(([dx,dy])=>({x:fz.x+dx,y:fz.y+dy}))
-      .filter(p=>isWalkable(p.x,p.y));
-    if (!adj.length) return stopAction("No path to furnace.");
-    adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-    setPathTo(adj[0].x, adj[0].y);
-    return;
-  }
-
-  player.facing.x = clamp(fz.x - player.x, -1, 1);
-  player.facing.y = clamp(fz.y - player.y, -1, 1);
-
-  if (player.action.type !== "idle") return;
-
-  chatLine(`<span class="muted">The furnace is cold. (Smithing coming soon.)</span>`);
-  stopAction();
-  return;
-}
-
-// ---------- ANVIL ----------
-if (t.kind === "anvil"){
-  const av = interactables[t.index];
-  if (!av) return stopAction();
-
-  if (!inRangeOfTile(av.x, av.y, 1.1)){
-    const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-      .map(([dx,dy])=>({x:av.x+dx,y:av.y+dy}))
-      .filter(p=>isWalkable(p.x,p.y));
-    if (!adj.length) return stopAction("No path to anvil.");
-    adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-    setPathTo(adj[0].x, adj[0].y);
-    return;
-  }
-
-  player.facing.x = clamp(av.x - player.x, -1, 1);
-  player.facing.y = clamp(av.y - player.y, -1, 1);
-
-  if (player.action.type !== "idle") return;
-
-  chatLine(`<span class="muted">You inspect the anvil. (Smithing coming soon.)</span>`);
-  stopAction();
-  return;
-}
-
-// ---------- CAMPFIRE ----------
-  if (t.kind === "fire"){
-    const f = interactables[t.index];
-    if (!f) return stopAction();
-
-    if (!inRangeOfTile(f.x, f.y, 1.1)){
-      const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-        .map(([dx,dy])=>({x:f.x+dx,y:f.y+dy}))
-        .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction("No path to fire.");
-      adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      setPathTo(adj[0].x, adj[0].y);
-      return;
-    }
-
-    player.facing.x = clamp(f.x - player.x, -1, 1);
-    player.facing.y = clamp(f.y - player.y, -1, 1);
-
-    if (player.action.type !== "idle") return;
-
-   // Prefer the currently selected "Use:" item if it's cookable.
-const useCookable = (useState.activeItemId && COOK_RECIPES[useState.activeItemId] && hasItem(useState.activeItemId))
-  ? useState.activeItemId
-  : null;
-
-// Fallback: cook *something* if you have it
-const cookId =
-  useCookable ||
-  (hasItem("rat_meat") ? "rat_meat" :
-  (hasItem("goldfish") ? "goldfish" : null));
-
-if (!cookId){
-  chatLine(`<span class="muted">The fire crackles.</span>`);
-  stopAction();
-  return;
-}
-
-const rec = COOK_RECIPES[cookId];
-chatLine(`You cook over the fire...`);
-startTimedAction("cook", 1400, "Cooking...", () => {
-  // consume 1 raw item
-  if (!removeItemsFromInventory(cookId, 1)){
-    chatLine(`<span class="warn">You need ${Items[cookId]?.name ?? cookId}.</span>`);
-    return;
-  }
-
-  // if you used the "Use:" state to pick this item, clear it after the cook
-  if (useState.activeItemId === cookId) setUseState(null);
-
-  const got = addToInventory(rec.out, 1);
-  if (got === 1){
-    addXP("cooking", rec.xp);
-    chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
-  } else {
-    // drop on *your* tile (not in the river / unreachable)
-    addGroundLoot(player.x, player.y, rec.out, 1);
-    addXP("cooking", rec.xp);
-    chatLine(`<span class="warn">Inventory full: ${Items[rec.out].name}</span> (+${rec.xp} XP)`);
-  }
-});
-
-
-    return;
-  }
-// ---------- FISHING ----------
-if (t.kind === "fish"){
-  const spot = interactables[t.index];
-  if (!spot) return stopAction();
-
-  if (!inRangeOfTile(spot.x, spot.y, 1.25)){
-    const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-      .map(([dx,dy])=>({x:spot.x+dx,y:spot.y+dy}))
-      .filter(p=>isWalkable(p.x,p.y));
-    if (!adj.length) return stopAction("No path to fishing spot.");
-    adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-    setPathTo(adj[0].x, adj[0].y);
-    return;
-  }
-
-  player.facing.x = clamp(spot.x - player.x, -1, 1);
-  player.facing.y = clamp(spot.y - player.y, -1, 1);
-
-  if (player.action.type !== "idle") return;
-
-  const lvl = levelFromXP(Skills.fishing.xp);
-  if (lvl < 1){
-    stopAction("Your Fishing level is too low.");
-    return;
-  }
-
-  // Goldfish stack; allow fishing if you already have a stack even when inv is full.
-  if (!hasItem("goldfish") && emptyInvSlots() <= 0){
-    stopAction("Inventory full.");
-    return;
-  }
-
-  startTimedAction("fish", 1600, "Fishing...", () => {
-    const lvlNow = levelFromXP(Skills.fishing.xp);
-
-    // simple RS-like catch chance
-    const chance = clamp(0.35 + lvlNow * 0.05, 0.35, 0.90);
-    if (Math.random() > chance){
-      chatLine(`<span class="muted">You fail to catch anything.</span>`);
-      return;
-    }
-
-    const got = addToInventory("goldfish", 1);
-    if (got === 1){
-      addXP("fishing", 18);
-      chatLine(`<span class="good">You catch a gold fish.</span> (+18 XP)`);
-    } else {
-      addGroundLoot(player.x, player.y, "goldfish", 1);
-      addXP("fishing", 18);
-      chatLine(`<span class="warn">Inventory full: ${Items.goldfish.name}</span> (+18 XP)`);
-    }
+  const { spawnGatherParticles, spawnCombatFX } = createCombatEffects({
+    player,
+    gatherParticles,
+    combatFX,
+    tileCenter,
+    now
   });
 
-  return;
-}
+  // ---------- Combat math / rolls ----------
+  const { rollPlayerAttack, rollMobAttack } = createCombatRolls({
+    levelFromXP,
+    Skills,
+    clamp,
+    MOB_DEFS,
+    Items,
+    equipment
+  });
 
-  // ---------- RESOURCES ----------
-  if (t.kind==="res"){
-    const r = resources[t.index];
-    if (!r || !r.alive) return stopAction("That resource is gone.");
-    if (r.type==="tree" && !hasItem("axe")) return stopAction("You need an axe.");
-    if (r.type==="rock" && !hasItem("pick")) return stopAction("You need a pick.");
+  const {
+    mobTileWalkable,
+    mobStepToward,
+    findBestMeleeEngagePath,
+    pushMobOffPlayerTile,
+    resolveMeleeTileOverlap,
+    handlePlayerDeath,
+    updateMobsAI
+  } = createMobAI({
+    isWalkable: navIsWalkable,
+    resources,
+    interactables,
+    player,
+    mobs,
+    tileCenter,
+    astar: navAstar,
+    stopAction,
+    startCastle,
+    wallet,
+    getGold,
+    renderGold,
+    addGroundLoot,
+    GOLD_ITEM_ID,
+    chatLine,
+    now,
+    syncPlayerPix,
+    inRectMargin,
+    MOB_DEFS,
+    dist,
+    tilesBetweenTiles,
+    rollMobAttack,
+    clamp,
+    getActiveZone
+  });
 
-    if (!inRangeOfTile(r.x, r.y, 1.1)){
-      const adj = [[1,0],[-1,0],[0,1],[0,-1]]
-        .map(([dx,dy])=>({x:r.x+dx,y:r.y+dy}))
-        .filter(p=>isWalkable(p.x,p.y));
-      if (!adj.length) return stopAction("No path to target.");
-      adj.sort((a,c)=> (Math.abs(a.x-player.x)+Math.abs(a.y-player.y)) - (Math.abs(c.x-player.x)+Math.abs(c.y-player.y)));
-      setPathTo(adj[0].x, adj[0].y);
-      return;
-    }
+  const { updateFX, drawFX } = createFXRenderer({
+    now,
+    gatherParticles,
+    combatFX,
+    clamp,
+    ctx
+  });
 
-    player.facing.x = clamp(r.x - player.x, -1, 1);
-    player.facing.y = clamp(r.y - player.y, -1, 1);
-
-    if (player.action.type !== "idle") return;
-
-    if (r.type==="tree"){
-      chatLine(`You swing your axe at the tree...`);
-      startTimedAction("woodcut", 1400, "Chopping...", () => {
-        r.alive=false; r.respawnAt=now()+9000;
-
-        const got = addToInventory("log", 1);
-        if (got === 1){
-          addXP("woodcutting", 35);
-          chatLine(`<span class="good">You get a log.</span> (+35 XP)`);
-        } else {
-          addGroundLoot(r.x, r.y, "log", 1);
-          chatLine(`<span class="warn">Inventory full: ${Items.log.name}</span>`);
-        }
-      });
-    } else {
-      chatLine(`You chip away at the rock...`);
-      startTimedAction("mine", 1600, "Mining...", () => {
-        r.alive=false; r.respawnAt=now()+11000;
-
-        const got = addToInventory("ore", 1);
-        if (got === 1){
-          addXP("mining", 40);
-          chatLine(`<span class="good">You get some ore.</span> (+40 XP)`);
-        } else {
-          addGroundLoot(r.x, r.y, "ore", 1);
-          chatLine(`<span class="warn">Inventory full: ${Items.ore.name}</span>`);
-        }
-      });
-    }
-    return;
-  }
-
-  // ---------- MOBS ----------
-  if (t.kind==="mob"){
-    const m=mobs[t.index];
-    if (!m || !m.alive) return stopAction("That creature is gone.");
-
-    const tNow = now();
-const style = getCombatStyle();
-if (style === "melee" && resolveMeleeTileOverlap(m)) return;
-const maxRangeTiles = (style === "melee") ? 1.15 : 5.0;
-const dTiles = tilesFromPlayerToTile(m.x, m.y);
-
-
-    if (dTiles > maxRangeTiles){
-  // Prevent â€œfreezeâ€ from pathfinding spam when unreachable
-  if (tNow < (player._pathTryUntil || 0)) return;
-  player._pathTryUntil = tNow + 200; // ms throttle
-
-      if (style !== "melee"){
-        const tNow = now();
-        if (!player._lastRangeMsgAt || (tNow - player._lastRangeMsgAt) > 900){
-          chatLine(`<span class="warn">Out of range (max 5).</span>`);
-          player._lastRangeMsgAt = tNow;
-        }
-        const best = findBestTileWithinRange(m.x, m.y, 5.0);
-        if (!best) return stopAction("No path to target.");
-        player.path = best.path;
-        return;
-      }
-
-      const best = findBestMeleeEngagePath(m);
-      if (!best) return stopAction("No path to target.");
-      player.path = best.path;
-return;
-
-    }
-
-    if (style === "melee" && resolveMeleeTileOverlap(m)) return;
-
-    player.facing.x = clamp(m.x - player.x, -1, 1);
-    player.facing.y = clamp(m.y - player.y, -1, 1);
-
-    
-    if (tNow < player.attackCooldownUntil) return;
-    player.attackCooldownUntil = tNow + 900;
-
-    if (style === "ranged"){
-      if (!consumeFromQuiver("wooden_arrow", 1)){
-        chatLine(`<span class="warn">No arrows.</span>`);
-        return stopAction();
-      }
-    }
-
-// engage mob so it can retaliate (safe even if you havenâ€™t added AI yet)
-m.target = "player";
-m.provokedUntil = tNow + 15000;
-m.aggroUntil = tNow + 15000;
-
-const roll = rollPlayerAttack(style, m);
-
-if (style === "melee") spawnCombatFX("slash", m.x, m.y);
-if (style === "ranged") spawnCombatFX("arrow", m.x, m.y);
-if (style === "magic") spawnCombatFX("bolt", m.x, m.y);
-
-const mobName = (m.name || "creature").toLowerCase();
-
-if (!roll.hit || roll.dmg <= 0){
-  if (style === "magic"){
-    chatLine(`Your <b>Air Bolt</b> splashes harmlessly on the ${mobName}.`);
-  } else if (style === "ranged"){
-    chatLine(`You shoot and miss the ${mobName}.`);
-  } else {
-    chatLine(`You swing and miss the ${mobName}.`);
-  }
-  return;
-}
-
-const dmg = roll.dmg;
-m.hp = Math.max(0, m.hp - dmg);
-
-addXP("health", dmg);
-
-if (style === "melee"){
-  addXP(meleeState.selected, dmg);
-} else if (style === "ranged"){
-  addXP("ranged", dmg);
-} else {
-  addXP("sorcery", dmg);
-}
-
-if (style === "magic"){
-  chatLine(`You cast <b>Air Bolt</b> at the ${mobName} for <b>${dmg}</b>.`);
-} else if (style === "ranged"){
-  chatLine(`You shoot the ${mobName} for <b>${dmg}</b>.`);
-} else {
-  chatLine(`You hit the ${mobName} for <b>${dmg}</b>.`);
-}
-
-    if (m.hp <= 0){
-      m.alive=false; m.respawnAt=now()+12000; m.hp=0;
-      m.target = null;
-      m.provokedUntil = 0;
-      m.aggroUntil = 0;
-      m.attackCooldownUntil = 0;
-      m.moveCooldownUntil = 0;
-      chatLine(`<span class="good">You defeat the ${mobName}.</span>`);
-      if (m.type === "goblin"){
-        if (Math.random() < 0.78){
-          const got = addToInventory("bone", 1);
-          if (got === 1){
-            chatLine(`<span class="good">The goblin drops a bone.</span>`);
-          } else {
-            addGroundLoot(m.x, m.y, "bone", 1);
-            chatLine(`<span class="warn">Inventory full: ${Items.bone.name}</span>`);
-          }
-        }
-        if (Math.random() < 0.50){
-          const oreGot = addToInventory("ore", 1);
-          if (oreGot === 1){
-            chatLine(`<span class="good">The goblin drops some ore.</span>`);
-          } else {
-            addGroundLoot(m.x, m.y, "ore", 1);
-            chatLine(`<span class="warn">Inventory full: ${Items.ore.name}</span>`);
-          }
-        }
-        if (Math.random() < 0.62){
-          const arrowCount = 2 + Math.floor(Math.random()*5);
-          addToInventory("wooden_arrow", arrowCount);
-          chatLine(`<span class="good">The goblin drops ${arrowCount} wooden arrows.</span>`);
-        }
-        if (Math.random() < 0.88){
-          const g = 4 + Math.floor(Math.random()*12);
-          addGold(g);
-          chatLine(`<span class="good">You gain ${g} gold.</span>`);
-        }
-      } else {
-        // Extra drop: raw rat meat
-        if (Math.random() < 0.55){
-          const got = addToInventory("rat_meat", 1);
-          if (got === 1){
-            chatLine(`<span class="good">The rat drops raw meat.</span>`);
-          } else {
-            addGroundLoot(m.x, m.y, "rat_meat", 1);
-            chatLine(`<span class="warn">Inventory full: ${Items.rat_meat.name}</span>`);
-          }
-        }
-
-        if (Math.random() < 0.75){
-          const got = addToInventory("bone", 1);
-          if (got === 1){
-            chatLine(`<span class="good">The rat drops a bone.</span>`);
-          } else {
-            addGroundLoot(m.x, m.y, "bone", 1);
-            chatLine(`<span class="warn">Inventory full: ${Items.bone.name}</span>`);
-          }
-          if (Math.random() < 0.65){
-            const g = 1 + Math.floor(Math.random()*8);
-            addGold(g);
-            chatLine(`<span class="good">You gain ${g} gold.</span>`);
-          }
-        }
-      }
-
-      stopAction();
-    }
-  }
-}
+  ensureWalkIntoRangeAndActImpl = createActionResolver({
+    player,
+    interactables,
+    stopAction,
+    inRangeOfTile,
+    isWalkable: navIsWalkable,
+    setPathTo,
+    chatLine,
+    availability,
+    updateBankIcon,
+    openWindow,
+    renderVendorUI,
+    renderSmithingUI,
+    clamp,
+    useState,
+    COOK_RECIPES,
+    hasItem,
+    Items,
+    startTimedAction,
+    removeItemsFromInventory,
+    setUseState,
+    addToInventory,
+    addXP,
+    addGroundLoot,
+    levelFromXP,
+    Skills,
+    emptyInvSlots,
+    resources,
+    now,
+    getCombatStyle,
+    resolveMeleeTileOverlap,
+    tilesFromPlayerToTile,
+    findBestTileWithinRange,
+    findBestMeleeEngagePath,
+    mobs,
+    consumeFromQuiver,
+    rollPlayerAttack,
+    spawnCombatFX,
+    meleeState,
+    addGold,
+    onUseLadder: useLadder
+  }).ensureWalkIntoRangeAndAct;
 
 
   function inRangeOfCurrentTarget(){
@@ -4332,6 +4229,11 @@ if (style === "magic"){
       const b=interactables[t.index];
       if (!b) return false;
       return inRangeOfTile(b.x,b.y,1.1);
+    }
+    if (t.kind==="ladder_down" || t.kind==="ladder_up"){
+      const l = interactables[t.index];
+      if (!l) return false;
+      return inRangeOfTile(l.x, l.y, 1.1);
     }
     return false;
   }
@@ -4429,6 +4331,7 @@ if (item.ammo){
   function drawMap(){
     const tAnim = Math.floor(performance.now()/350);
     const {startX,startY,endX,endY}=visibleTileBounds();
+    const inDungeonZone = (getActiveZone() === ZONE_KEYS.DUNGEON);
 
     for (let y=startY; y<endY; y++){
       for (let x=startX; x<endX; x++){
@@ -4437,132 +4340,205 @@ if (item.ammo){
         const n=(x*17+y*31+((x+y)*7))%10;
 
         if (t===0){
-          const base=((x+y)%2===0) ? "#12301e" : "#102b1b";
-          ctx.fillStyle=base;
-          ctx.fillRect(px,py,TILE,TILE);
-          if (n===0 || n===7){
-            ctx.fillStyle="rgba(255,255,255,.04)";
-            ctx.fillRect(px+6,py+10,2,2);
-            ctx.fillRect(px+18,py+20,2,2);
+          if (inDungeonZone){
+            const base = ((x+y)%2===0) ? "#1a1f24" : "#171b20";
+            ctx.fillStyle = base;
+            ctx.fillRect(px,py,TILE,TILE);
+            if ((n % 3) === 0){
+              ctx.fillStyle = "rgba(255,255,255,.03)";
+              ctx.fillRect(px+8,py+9,1.5,1.5);
+              ctx.fillRect(px+21,py+20,1.5,1.5);
+            }
+          } else {
+            const base=((x+y)%2===0) ? "#12301e" : "#102b1b";
+            ctx.fillStyle=base;
+            ctx.fillRect(px,py,TILE,TILE);
+            if (n===0 || n===7){
+              ctx.fillStyle="rgba(255,255,255,.04)";
+              ctx.fillRect(px+6,py+10,2,2);
+              ctx.fillRect(px+18,py+20,2,2);
+            }
           }
         } else if (t===1){
-          ctx.fillStyle="#0d2a3d";
-          ctx.fillRect(px,py,TILE,TILE);
-          const wave=(x+tAnim+y)%4;
-          if (wave===0){
-            ctx.fillStyle="rgba(255,255,255,.06)";
-            ctx.fillRect(px,py+8,TILE,2);
-          } else if (wave===2){
-            ctx.fillStyle="rgba(255,255,255,.04)";
-            ctx.fillRect(px,py+18,TILE,2);
+          if (inDungeonZone){
+            const pulse = 0.55 + 0.45 * Math.sin((tAnim + x + y) * 0.7);
+            ctx.fillStyle="#04070d";
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.fillStyle=`rgba(56,189,248,${0.08 + 0.05 * pulse})`;
+            ctx.fillRect(px+2,py+6,TILE-4,2);
+            ctx.fillRect(px+4,py+18,TILE-8,2);
+          } else {
+            ctx.fillStyle="#0d2a3d";
+            ctx.fillRect(px,py,TILE,TILE);
+            const wave=(x+tAnim+y)%4;
+            if (wave===0){
+              ctx.fillStyle="rgba(255,255,255,.06)";
+              ctx.fillRect(px,py+8,TILE,2);
+            } else if (wave===2){
+              ctx.fillStyle="rgba(255,255,255,.04)";
+              ctx.fillRect(px,py+18,TILE,2);
+            }
           }
         } else if (t===2){
-          ctx.fillStyle="#2a2f3a";
-          ctx.fillRect(px,py,TILE,TILE);
-          ctx.fillStyle="rgba(255,255,255,.06)";
-          if (n%3===0) ctx.fillRect(px+6,py+7,3,2);
-          if (n%4===0) ctx.fillRect(px+18,py+19,4,2);
+          if (inDungeonZone){
+            ctx.fillStyle="#252b33";
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.fillStyle="rgba(0,0,0,.25)";
+            ctx.fillRect(px+5,py+8,9,8);
+            ctx.fillRect(px+16,py+14,8,7);
+            ctx.fillStyle="rgba(203,213,225,.08)";
+            ctx.fillRect(px+7,py+10,3,2);
+            ctx.fillRect(px+18,py+15,3,2);
+          } else {
+            ctx.fillStyle="#2a2f3a";
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.fillStyle="rgba(255,255,255,.06)";
+            if (n%3===0) ctx.fillRect(px+6,py+7,3,2);
+            if (n%4===0) ctx.fillRect(px+18,py+19,4,2);
+          }
         } else if (t===3){
-          const base=((x+y)%2===0) ? "#4b5563" : "#46505d";
-          ctx.fillStyle=base;
-          ctx.fillRect(px,py,TILE,TILE);
-          if (n===2){
-            ctx.strokeStyle="rgba(0,0,0,.25)";
+          if (inDungeonZone){
+            const base=((x+y)%2===0) ? "#2e353d" : "#2a3138";
+            ctx.fillStyle=base;
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.strokeStyle="rgba(148,163,184,.14)";
             ctx.beginPath();
-            ctx.moveTo(px+6,py+20);
-            ctx.lineTo(px+14,py+12);
-            ctx.lineTo(px+22,py+16);
+            ctx.moveTo(px+1,py+16); ctx.lineTo(px+31,py+16);
+            ctx.moveTo(px+16,py+1); ctx.lineTo(px+16,py+31);
             ctx.stroke();
+            if (n===2 || n===6){
+              ctx.strokeStyle="rgba(0,0,0,.32)";
+              ctx.beginPath();
+              ctx.moveTo(px+7,py+22);
+              ctx.lineTo(px+14,py+13);
+              ctx.lineTo(px+22,py+17);
+              ctx.stroke();
+            }
+          } else {
+            const base=((x+y)%2===0) ? "#4b5563" : "#46505d";
+            ctx.fillStyle=base;
+            ctx.fillRect(px,py,TILE,TILE);
+            if (n===2){
+              ctx.strokeStyle="rgba(0,0,0,.25)";
+              ctx.beginPath();
+              ctx.moveTo(px+6,py+20);
+              ctx.lineTo(px+14,py+12);
+              ctx.lineTo(px+22,py+16);
+              ctx.stroke();
+            }
           }
         } else if (t===4){
-          ctx.fillStyle="#374151";
-          ctx.fillRect(px,py,TILE,TILE);
-          ctx.strokeStyle="rgba(0,0,0,.30)";
-          ctx.strokeRect(px+1,py+1,TILE-2,TILE-2);
-
-          ctx.strokeStyle="rgba(255,255,255,.07)";
-          ctx.beginPath();
-          ctx.moveTo(px+2,py+10); ctx.lineTo(px+TILE-2,py+10);
-          ctx.moveTo(px+2,py+22); ctx.lineTo(px+TILE-2,py+22);
-          ctx.stroke();
-
-          if (y%2===0){
+          if (inDungeonZone){
+            ctx.fillStyle="#1f252d";
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.strokeStyle="rgba(0,0,0,.45)";
+            ctx.strokeRect(px+1,py+1,TILE-2,TILE-2);
+            ctx.fillStyle="rgba(148,163,184,.07)";
+            ctx.fillRect(px+2,py+4,TILE-4,3);
+            ctx.fillStyle="rgba(0,0,0,.22)";
+            ctx.fillRect(px+2,py+24,TILE-4,5);
+            ctx.strokeStyle="rgba(148,163,184,.10)";
             ctx.beginPath();
-            ctx.moveTo(px+16,py+2); ctx.lineTo(px+16,py+10);
-            ctx.moveTo(px+8,py+10); ctx.lineTo(px+8,py+22);
-            ctx.moveTo(px+24,py+10); ctx.lineTo(px+24,py+22);
+            ctx.moveTo(px+8,py+8); ctx.lineTo(px+8,py+24);
+            ctx.moveTo(px+24,py+8); ctx.lineTo(px+24,py+24);
             ctx.stroke();
           } else {
+            ctx.fillStyle="#374151";
+            ctx.fillRect(px,py,TILE,TILE);
+            ctx.strokeStyle="rgba(0,0,0,.30)";
+            ctx.strokeRect(px+1,py+1,TILE-2,TILE-2);
+
+            ctx.strokeStyle="rgba(255,255,255,.07)";
             ctx.beginPath();
-            ctx.moveTo(px+8,py+2); ctx.lineTo(px+8,py+10);
-            ctx.moveTo(px+24,py+2); ctx.lineTo(px+24,py+10);
-            ctx.moveTo(px+16,py+10); ctx.lineTo(px+16,py+22);
+            ctx.moveTo(px+2,py+10); ctx.lineTo(px+TILE-2,py+10);
+            ctx.moveTo(px+2,py+22); ctx.lineTo(px+TILE-2,py+22);
             ctx.stroke();
+
+            if (y%2===0){
+              ctx.beginPath();
+              ctx.moveTo(px+16,py+2); ctx.lineTo(px+16,py+10);
+              ctx.moveTo(px+8,py+10); ctx.lineTo(px+8,py+22);
+              ctx.moveTo(px+24,py+10); ctx.lineTo(px+24,py+22);
+              ctx.stroke();
+            } else {
+              ctx.beginPath();
+              ctx.moveTo(px+8,py+2); ctx.lineTo(px+8,py+10);
+              ctx.moveTo(px+24,py+2); ctx.lineTo(px+24,py+10);
+              ctx.moveTo(px+16,py+10); ctx.lineTo(px+16,py+22);
+              ctx.stroke();
+            }
           }
         } else if (t===5){
-          const isBridge=(y===RIVER_Y || y===RIVER_Y+1);
-          if (isBridge){
-            ctx.fillStyle="#3b2f22";
+          if (inDungeonZone){
+            ctx.fillStyle="#4a3624";
             ctx.fillRect(px,py,TILE,TILE);
-            ctx.fillStyle="rgba(240,220,120,.18)";
-            for (let i=0;i<4;i++) ctx.fillRect(px+2,py+4+i*7,TILE-4,2);
-            ctx.fillStyle="rgba(0,0,0,.25)";
+            ctx.fillStyle="rgba(240,220,120,.16)";
+            for (let i=0;i<4;i++) ctx.fillRect(px+3,py+4+i*7,TILE-6,2);
+            ctx.fillStyle="rgba(0,0,0,.28)";
             ctx.fillRect(px+2,py+2,2,TILE-4);
             ctx.fillRect(px+TILE-4,py+2,2,TILE-4);
           } else {
-            const upT = (y>0) ? map[y-1][x] : -1;
-            const dnT = (y<H-1) ? map[y+1][x] : -1;
-            const lfT = (x>0) ? map[y][x-1] : -1;
-            const rtT = (x<W-1) ? map[y][x+1] : -1;
-            const up = upT===5, dn = dnT===5, lf = lfT===5, rt = rtT===5;
-            const vertical = up || dn;
-            const horizontal = lf || rt;
-
-            const base = ((x+y)%2===0) ? "#4b3928" : "#463523";
-            ctx.fillStyle=base;
-            ctx.fillRect(px,py,TILE,TILE);
-
-            // Static soil grain (no time-based animation to avoid strobing).
-            if ((n%2)===0){
-              ctx.fillStyle="rgba(0,0,0,.07)";
-              ctx.fillRect(px+6,py+7,2,2);
-              ctx.fillRect(px+22,py+18,2,2);
-            }
-            if ((n%3)===1){
-              ctx.fillStyle="rgba(240,216,160,.09)";
-              ctx.fillRect(px+13,py+10,2,1);
-              ctx.fillRect(px+18,py+22,1,1);
-            }
-
-            // Soft boundary where grass starts so roads do not look grid-cut.
-            if (!up){
-              ctx.fillStyle = (upT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
-              ctx.fillRect(px,py,TILE,2);
-            }
-            if (!dn){
-              ctx.fillStyle = (dnT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
-              ctx.fillRect(px,py+TILE-2,TILE,2);
-            }
-            if (!lf){
-              ctx.fillStyle = (lfT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
-              ctx.fillRect(px,py,2,TILE);
-            }
-            if (!rt){
-              ctx.fillStyle = (rtT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
-              ctx.fillRect(px+TILE-2,py,2,TILE);
-            }
-
-            // Ruts make directionality feel less blocky.
-            ctx.fillStyle="rgba(23,15,10,.18)";
-            if (vertical && !horizontal){
-              ctx.fillRect(px+11,py+4,2,TILE-8);
-              ctx.fillRect(px+19,py+4,2,TILE-8);
-            } else if (horizontal && !vertical){
-              ctx.fillRect(px+4,py+11,TILE-8,2);
-              ctx.fillRect(px+4,py+19,TILE-8,2);
+            const isBridge=(y===RIVER_Y || y===RIVER_Y+1);
+            if (isBridge){
+              ctx.fillStyle="#3b2f22";
+              ctx.fillRect(px,py,TILE,TILE);
+              ctx.fillStyle="rgba(240,220,120,.18)";
+              for (let i=0;i<4;i++) ctx.fillRect(px+2,py+4+i*7,TILE-4,2);
+              ctx.fillStyle="rgba(0,0,0,.25)";
+              ctx.fillRect(px+2,py+2,2,TILE-4);
+              ctx.fillRect(px+TILE-4,py+2,2,TILE-4);
             } else {
-              ctx.fillRect(px+11,py+11,2,2);
-              ctx.fillRect(px+19,py+19,2,2);
+              const upT = (y>0) ? map[y-1][x] : -1;
+              const dnT = (y<H-1) ? map[y+1][x] : -1;
+              const lfT = (x>0) ? map[y][x-1] : -1;
+              const rtT = (x<W-1) ? map[y][x+1] : -1;
+              const up = upT===5, dn = dnT===5, lf = lfT===5, rt = rtT===5;
+              const vertical = up || dn;
+              const horizontal = lf || rt;
+
+              const base = ((x+y)%2===0) ? "#4b3928" : "#463523";
+              ctx.fillStyle=base;
+              ctx.fillRect(px,py,TILE,TILE);
+
+              if ((n%2)===0){
+                ctx.fillStyle="rgba(0,0,0,.07)";
+                ctx.fillRect(px+6,py+7,2,2);
+                ctx.fillRect(px+22,py+18,2,2);
+              }
+              if ((n%3)===1){
+                ctx.fillStyle="rgba(240,216,160,.09)";
+                ctx.fillRect(px+13,py+10,2,1);
+                ctx.fillRect(px+18,py+22,1,1);
+              }
+
+              if (!up){
+                ctx.fillStyle = (upT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+                ctx.fillRect(px,py,TILE,2);
+              }
+              if (!dn){
+                ctx.fillStyle = (dnT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+                ctx.fillRect(px,py+TILE-2,TILE,2);
+              }
+              if (!lf){
+                ctx.fillStyle = (lfT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+                ctx.fillRect(px,py,2,TILE);
+              }
+              if (!rt){
+                ctx.fillStyle = (rtT===0) ? "rgba(18,48,30,.18)" : "rgba(0,0,0,.14)";
+                ctx.fillRect(px+TILE-2,py,2,TILE);
+              }
+
+              ctx.fillStyle="rgba(23,15,10,.18)";
+              if (vertical && !horizontal){
+                ctx.fillRect(px+11,py+4,2,TILE-8);
+                ctx.fillRect(px+19,py+4,2,TILE-8);
+              } else if (horizontal && !vertical){
+                ctx.fillRect(px+4,py+11,TILE-8,2);
+                ctx.fillRect(px+4,py+19,TILE-8,2);
+              } else {
+                ctx.fillRect(px+11,py+11,2,2);
+                ctx.fillRect(px+19,py+19,2,2);
+              }
             }
           }
         }
@@ -4951,7 +4927,7 @@ if (item.ammo){
   ctx.fillStyle="#0b0f14";
   ctx.fillRect(px+11, py+18, 10, 8);
 
-  // glow (animated)
+ // glow (animated)
   ctx.fillStyle=`rgba(249,115,22,${0.65*flick})`;
   ctx.fillRect(px+12, py+19, 8, 6);
   ctx.fillStyle=`rgba(251,191,36,${0.55*flick})`;
@@ -4961,6 +4937,27 @@ if (item.ammo){
   ctx.fillStyle=`rgba(253,230,138,${0.35*flick})`;
   ctx.fillRect(px+15, py+15, 1, 1);
   ctx.fillRect(px+18, py+14, 1, 1);
+
+  const activeSmelt = (
+    player.action.type === "smelt" &&
+    player.target?.kind === "furnace" &&
+    interactables[player.target.index]?.x === x &&
+    interactables[player.target.index]?.y === y
+  );
+  if (activeSmelt){
+    const pulse = 0.6 + 0.4*Math.sin(t*0.04);
+    ctx.fillStyle = `rgba(249,115,22,${0.22 + 0.24*pulse})`;
+    ctx.beginPath();
+    ctx.ellipse(px + 16, py + 22, 11 + 3*pulse, 6 + 2*pulse, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(253,186,116,${0.45 + 0.35*pulse})`;
+    for (let i=0; i<5; i++){
+      const sx = px + 14 + i*2 + Math.sin(t*0.02 + i*0.8)*1.1;
+      const sy = py + 16 - i*1.5 - Math.cos(t*0.024 + i*0.5)*1.8;
+      ctx.fillRect(sx, sy, 1.6, 1.6);
+    }
+  }
 }
 
 function drawAnvil(x,y){
@@ -4989,6 +4986,64 @@ function drawAnvil(x,y){
   // shadow
   ctx.fillStyle="rgba(0,0,0,.22)";
   ctx.fillRect(px+10, py+18, 12, 1);
+
+  const activeSmith = player.action.type === "smith" && inRangeOfTile(x, y, 1.6);
+  if (activeSmith){
+    const t = now();
+    const pulse = 0.5 + 0.5*Math.sin(t*0.03);
+    const hx = px + 16;
+    const hy = py + 15;
+
+    ctx.fillStyle = `rgba(251,191,36,${0.16 + 0.2*pulse})`;
+    ctx.beginPath();
+    ctx.ellipse(hx, hy + 3, 10 + 2*pulse, 4 + pulse, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = `rgba(253,230,138,${0.42 + 0.4*pulse})`;
+    for (let i=0; i<4; i++){
+      const sx = hx - 4 + i*3 + Math.sin(t*0.018 + i)*1.3;
+      const sy = hy - 1 - i*1.8 - Math.cos(t*0.02 + i*0.9)*1.5;
+      ctx.fillRect(sx, sy, 1.8, 1.8);
+    }
+  }
+}
+
+function drawLadder(x, y, mode = "down"){
+  const px = x * TILE;
+  const py = y * TILE;
+
+  ctx.fillStyle = "rgba(0,0,0,.22)";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 26, 9, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#7c4a24";
+  ctx.fillRect(px + 11, py + 7, 3, 18);
+  ctx.fillRect(px + 18, py + 7, 3, 18);
+  ctx.fillStyle = "#a16207";
+  for (let i = 0; i < 4; i++) {
+    ctx.fillRect(px + 12, py + 9 + i * 4, 8, 2);
+  }
+
+  const pulse = 0.5 + 0.5 * Math.sin(now() * 0.01 + x * 0.5 + y * 0.7);
+  const glow = 0.18 + 0.16 * pulse;
+  if (mode === "down") {
+    ctx.fillStyle = `rgba(56,189,248,${glow})`;
+    ctx.beginPath();
+    ctx.moveTo(px + 16, py + 24);
+    ctx.lineTo(px + 11, py + 18);
+    ctx.lineTo(px + 21, py + 18);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    ctx.fillStyle = `rgba(134,239,172,${glow})`;
+    ctx.beginPath();
+    ctx.moveTo(px + 16, py + 12);
+    ctx.lineTo(px + 11, py + 18);
+    ctx.lineTo(px + 21, py + 18);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 function drawVendorShopDecor(){
@@ -5387,15 +5442,90 @@ function drawStarterCastleDecor(){
   ctx.restore();
 }
 
+function drawDungeonDecor(){
+  if (getActiveZone() !== ZONE_KEYS.DUNGEON) return;
+
+  const {startX,startY,endX,endY} = visibleTileBounds();
+  const t = now();
+
+  function inView(x, y) {
+    return !(x < startX - 1 || x > endX + 1 || y < startY - 1 || y > endY + 1);
+  }
+
+  function drawWallTorch(tx, ty, side = 1){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    const wx = px + (side > 0 ? 24 : 8);
+    const wy = py + 10;
+    const flick = 0.65 + 0.35 * Math.sin(t * 0.014 + tx * 1.8 + ty * 1.3);
+
+    ctx.fillStyle = `rgba(251,191,36,${0.12 * flick})`;
+    ctx.beginPath();
+    ctx.arc(wx, wy + 4, 10, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#fbbf24";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(wx - 2, wy - 3);
+    ctx.lineTo(wx + 2, wy - 3);
+    ctx.moveTo(wx, wy - 3);
+    ctx.lineTo(wx, wy + 2);
+    ctx.stroke();
+
+    ctx.fillStyle = `rgba(249,115,22,${0.82 * flick})`;
+    ctx.beginPath();
+    ctx.ellipse(wx, wy + 2, 1.8, 2.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawPillar(tx, ty){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    ctx.fillStyle = "rgba(0,0,0,.22)";
+    ctx.fillRect(px + 8, py + 25, 16, 3);
+    ctx.fillStyle = "#4b5563";
+    ctx.fillRect(px + 10, py + 9, 12, 16);
+    ctx.fillStyle = "#6b7280";
+    ctx.fillRect(px + 9, py + 7, 14, 3);
+    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.fillRect(px + 11, py + 10, 2, 12);
+  }
+
+  function drawDebris(tx, ty){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    ctx.fillStyle = "rgba(15,23,42,.28)";
+    ctx.fillRect(px + 6, py + 20, 7, 4);
+    ctx.fillRect(px + 16, py + 17, 6, 5);
+    ctx.fillStyle = "rgba(148,163,184,.14)";
+    ctx.fillRect(px + 8, py + 19, 2, 2);
+    ctx.fillRect(px + 18, py + 16, 2, 2);
+  }
+
+  for (const torch of DUNGEON_TORCHES) drawWallTorch(torch.x, torch.y, torch.side);
+  for (const pillar of DUNGEON_PILLARS) drawPillar(pillar.x, pillar.y);
+  drawDebris(20, 28);
+  drawDebris(34, 30);
+  drawDebris(27, 4);
+}
+
  function drawInteractables(){
-    drawStarterCastleDecor();
-    drawVendorShopDecor();
+    if (getActiveZone() === ZONE_KEYS.OVERWORLD) {
+      drawStarterCastleDecor();
+      drawVendorShopDecor();
+    }
     const {startX,startY,endX,endY}=visibleTileBounds();
     for (const it of interactables){
       if (it.x<startX-1 || it.x>endX+1 || it.y<startY-1 || it.y>endY+1) continue;
       if (it.type==="bank") drawBankChest(it.x,it.y);
 if (it.type==="furnace") drawFurnace(it.x,it.y);
 if (it.type==="anvil")   drawAnvil(it.x,it.y);
+if (it.type==="ladder_down") drawLadder(it.x, it.y, "down");
+if (it.type==="ladder_up") drawLadder(it.x, it.y, "up");
 
 
       if (it.type==="fire"){
@@ -5520,32 +5650,44 @@ if (Number.isFinite(pile.expiresAt) && tNow >= pile.expiresAt){
     }
   }
 function drawPlayerWeapon(cx, cy, fx, fy){
-  // position weapon slightly to the side you're "favoring"
-  const side = (fx !== 0) ? fx : 1; // default right if facing up/down
+  const weaponId = equipment.weapon;
+  if (!weaponId) return;
+
+  // Position weapon slightly to the side you're "favoring".
+  const side = (fx !== 0) ? fx : 1; // Default right if facing up/down.
   const wx = cx + side * 10;
   const wy = cy + 2;
 
-  if (player.class === "Warrior"){
-    // sword
-    ctx.fillStyle = "#cbd5e1";
-    ctx.fillRect(wx-1, wy-10, 2, 12);          // blade
-    ctx.fillStyle = "#a16207";
-    ctx.fillRect(wx-3, wy+1, 6, 2);            // guard
-    ctx.fillStyle = "#854d0e";
-    ctx.fillRect(wx-1, wy+3, 2, 5);            // handle
-    } else if (player.class === "Ranger"){
-    // bow (flip when facing left)
+  const drawSword = ({ blade, guard, hilt }) => {
+    ctx.fillStyle = blade;
+    ctx.fillRect(wx-1, wy-10, 2, 12);
+    ctx.fillStyle = guard;
+    ctx.fillRect(wx-3, wy+1, 6, 2);
+    ctx.fillStyle = hilt;
+    ctx.fillRect(wx-1, wy+3, 2, 5);
+  };
+
+  const drawDagger = ({ blade, guard, hilt }) => {
+    ctx.fillStyle = blade;
+    ctx.fillRect(wx-1, wy-7, 2, 8);
+    ctx.fillStyle = guard;
+    ctx.fillRect(wx-2, wy+1, 4, 1);
+    ctx.fillStyle = hilt;
+    ctx.fillRect(wx-1, wy+2, 2, 3);
+  };
+
+  const drawBow = ({ bow, string }) => {
     ctx.save();
     ctx.translate(wx, wy);
-    ctx.scale(side, 1); // side is -1 when facing left, +1 when facing right
+    ctx.scale(side, 1); // side is -1 when facing left, +1 when facing right.
 
-    ctx.strokeStyle = "#a16207";
+    ctx.strokeStyle = bow;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(-2, -2, 8, -0.9, 0.9);
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(255,255,255,.65)"; // string
+    ctx.strokeStyle = string;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(4, -10);
@@ -5553,15 +5695,197 @@ function drawPlayerWeapon(cx, cy, fx, fy){
     ctx.stroke();
 
     ctx.restore();
+  };
 
-  } else {
-    // staff (Mage)
-    ctx.fillStyle = "#7c3aed";
+  const drawStaff = ({ orb, shaft }) => {
+    ctx.fillStyle = orb;
     ctx.beginPath();
     ctx.arc(wx, wy-10, 3, 0, Math.PI*2);
     ctx.fill();
-    ctx.fillStyle = "#a16207";
+    ctx.fillStyle = shaft;
     ctx.fillRect(wx-1, wy-8, 2, 16);
+  };
+
+  switch (weaponId){
+    case "sword":
+      drawSword({ blade: "#cbd5e1", guard: "#a16207", hilt: "#854d0e" });
+      return;
+    case "crude_sword":
+      drawSword({ blade: "#a8a29e", guard: "#6b4f2a", hilt: "#3f2d16" });
+      return;
+    case "crude_dagger":
+      drawDagger({ blade: "#b7a894", guard: "#6b4f2a", hilt: "#3f2d16" });
+      return;
+    case "bow":
+      drawBow({ bow: "#a16207", string: "rgba(255,255,255,.65)" });
+      return;
+    case "staff":
+      drawStaff({ orb: "#7c3aed", shaft: "#a16207" });
+      return;
+  }
+
+  const name = (Items[weaponId]?.name ?? weaponId).toLowerCase();
+  if (name.includes("bow")){
+    drawBow({ bow: "#a16207", string: "rgba(255,255,255,.65)" });
+    return;
+  }
+  if (name.includes("staff") || name.includes("wand")){
+    drawStaff({ orb: "#7c3aed", shaft: "#a16207" });
+    return;
+  }
+  if (name.includes("dagger") || name.includes("knife")){
+    drawDagger({ blade: "#cbd5e1", guard: "#a16207", hilt: "#854d0e" });
+    return;
+  }
+
+  drawSword({ blade: "#cbd5e1", guard: "#a16207", hilt: "#854d0e" });
+}
+
+function drawPlayerOffhand(cx, cy, fx, fy){
+  const offhandId = equipment.offhand;
+  if (!offhandId) return;
+
+  // Offhand sits on the opposite side of the favored hand.
+  const side = (fx !== 0) ? -fx : -1;
+  const sx = cx + side * 9;
+  const sy = cy + 6;
+
+  const drawShield = ({ rim, face, boss, strap }) => {
+    ctx.fillStyle = rim;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 6.2, 7.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 4.9, 5.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = strap;
+    ctx.fillRect(sx - 0.8, sy - 5.2, 1.6, 10.4);
+
+    ctx.fillStyle = boss;
+    ctx.beginPath();
+    ctx.arc(sx + side * 0.3, sy - 0.2, 1.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,.15)";
+    ctx.fillRect(sx - side * 2.4, sy - 4.2, 1.4, 3.2);
+  };
+
+  const drawCrudeShield = ({ wood, trim, strap }) => {
+    ctx.fillStyle = trim;
+    ctx.fillRect(sx - 5.4, sy - 6.6, 10.8, 12.4);
+    ctx.fillStyle = wood;
+    ctx.fillRect(sx - 4.4, sy - 5.6, 8.8, 10.4);
+
+    ctx.fillStyle = strap;
+    ctx.fillRect(sx - 2.8, sy - 4.8, 1.8, 9.2);
+    ctx.fillRect(sx + 1.0, sy - 4.8, 1.8, 9.2);
+
+    ctx.fillStyle = "rgba(255,255,255,.13)";
+    ctx.fillRect(sx - side * 2.6, sy - 4.4, 1.2, 2.8);
+  };
+
+  switch (offhandId){
+    case "shield":
+      drawShield({ rim: "#22423b", face: "#3f7267", boss: "#d1d5db", strap: "#11221e" });
+      return;
+    case "crude_shield":
+      drawCrudeShield({ wood: "#8f7f6a", trim: "#4e453a", strap: "#231f18" });
+      return;
+  }
+
+  const name = (Items[offhandId]?.name ?? offhandId).toLowerCase();
+  if (name.includes("shield")){
+    drawShield({ rim: "#374151", face: "#6b7280", boss: "#d1d5db", strap: "#1f2937" });
+  }
+}
+
+function drawSmithingAnimation(cx, cy, fx, fy, pct){
+  const side = (fx !== 0) ? fx : 1;
+  const hx = cx + side * 9;
+  const hy = cy + 8;
+
+  // Two hammer impacts per smithing cycle.
+  const strikeA = Math.max(0, 1 - Math.abs(pct - 0.32) / 0.12);
+  const strikeB = Math.max(0, 1 - Math.abs(pct - 0.74) / 0.12);
+  const strike = Math.max(strikeA, strikeB);
+  const swing = Math.sin(pct * Math.PI * 4) * 0.95;
+
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate((-0.45 + swing) * side);
+
+  // Hammer handle and head.
+  ctx.fillStyle = "#7c4a24";
+  ctx.fillRect(-1, -11, 2, 12);
+  ctx.fillStyle = "#9ca3af";
+  ctx.fillRect(-4, -14, 8, 4);
+  ctx.fillStyle = "rgba(255,255,255,.22)";
+  ctx.fillRect(-3, -13, 6, 1);
+  ctx.restore();
+
+  if (strike <= 0.02) return;
+
+  const ix = cx + side * 12;
+  const iy = cy + 11;
+  const pulse = 0.45 + 0.55 * strike;
+
+  ctx.fillStyle = `rgba(249,115,22,${0.22 * pulse})`;
+  ctx.beginPath();
+  ctx.ellipse(ix, iy, 8 + 3 * strike, 4 + 1.5 * strike, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const t = now() * 0.02;
+  for (let i = 0; i < 6; i++){
+    const ang = (i / 6) * Math.PI * 2 + t;
+    const rad = 3 + (i % 3) * 1.4 + strike * 2.8;
+    const sx = ix + Math.cos(ang) * rad;
+    const sy = iy + Math.sin(ang) * (1.8 + strike * 0.9) - 1.5;
+    ctx.fillStyle = `rgba(251,191,36,${0.45 + 0.45 * strike})`;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+}
+
+function drawSmeltingAnimation(cx, cy, fx, fy, pct){
+  const side = (fx !== 0) ? fx : 1;
+  const handX = cx + side * 8;
+  const handY = cy + 2;
+
+  let targetX = handX + side * 14;
+  let targetY = handY - 4;
+  if (player.target?.kind === "furnace"){
+    const f = interactables[player.target.index];
+    if (f){
+      targetX = f.x * TILE + TILE / 2;
+      targetY = f.y * TILE + TILE / 2 + 2;
+    }
+  }
+
+  const tossT = clamp(pct / 0.58, 0, 1);
+  const oreX = handX + (targetX - handX) * tossT;
+  const oreY = handY + (targetY - handY) * tossT - Math.sin(tossT * Math.PI) * 8;
+
+  const glow = 0.6 + 0.4 * Math.sin(now() * 0.02);
+  ctx.fillStyle = `rgba(249,115,22,${0.14 + 0.12 * glow})`;
+  ctx.beginPath();
+  ctx.ellipse(handX + side, handY + 4, 8, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (pct < 0.8){
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillRect(oreX - 2, oreY - 2, 4, 4);
+    ctx.fillStyle = "rgba(255,255,255,.22)";
+    ctx.fillRect(oreX - 1, oreY - 2, 2, 1);
+  }
+
+  const emberT = now() * 0.015;
+  for (let i = 0; i < 5; i++){
+    const ox = handX + side * (2 + i * 1.4) + Math.sin(emberT + i * 0.9) * 1.2;
+    const oy = handY - (i * 1.6) - (Math.cos(emberT + i * 0.7) + 1.2) * 1.8;
+    ctx.fillStyle = `rgba(253,186,116,${0.22 + i * 0.08})`;
+    ctx.fillRect(ox, oy, 1.6, 1.6);
   }
 }
 
@@ -5645,10 +5969,11 @@ function drawPlayerWeapon(cx, cy, fx, fy){
   ctx.lineTo(cx+5, cy+7);
   ctx.stroke();
 
-  // weapon (donâ€™t show if youâ€™re already drawing an axe/pick swing)
+  // Equipped gear (hide while drawing dedicated action tools/animations).
   const a = player.action;
-  const doingTool = (a.type==="woodcut" || a.type==="mine");
+  const doingTool = (a.type==="woodcut" || a.type==="mine" || a.type==="smith" || a.type==="smelt");
   if (!doingTool){
+    drawPlayerOffhand(cx, cy+4, fx, fy);
     drawPlayerWeapon(cx, cy+4, fx, fy);
   }
 
@@ -5686,6 +6011,12 @@ function drawPlayerWeapon(cx, cy, fx, fy){
       ctx.fillRect(-2, -18, 4, 10);
     }
     ctx.restore();
+  }
+
+  if (a.type === "smith"){
+    drawSmithingAnimation(cx, cy, fx, fy, actionProgress());
+  } else if (a.type === "smelt"){
+    drawSmeltingAnimation(cx, cy, fx, fy, actionProgress());
   }
 }
 
@@ -5781,68 +6112,23 @@ function drawPlayerWeapon(cx, cy, fx, fy){
   }
 
   // ---------- Minimap ----------
-  const minimap=document.getElementById("minimap");
-  const mctx=minimap.getContext("2d");
-
-  function drawMinimap(){
-    const mw=minimap.width, mh=minimap.height;
-    mctx.clearRect(0,0,mw,mh);
-
-    const sx = mw / W;
-    const sy = mh / H;
-
-    for (let y=0;y<H;y++){
-      for (let x=0;x<W;x++){
-        const t=map[y][x];
-        if (t===0) mctx.fillStyle="#12301e";
-        else if (t===1) mctx.fillStyle="#0d2a3d";
-        else if (t===2) mctx.fillStyle="#2a2f3a";
-        else if (t===3 || t===4) mctx.fillStyle="#46505d";
-        else if (t===5) mctx.fillStyle="#3a2f22";
-        mctx.fillRect(Math.floor(x*sx), Math.floor(y*sy), Math.ceil(sx), Math.ceil(sy));
-      }
-    }
-
-    const bankIt = interactables.find(it=>it.type==="bank");
-    if (bankIt){
-      mctx.fillStyle="#fbbf24";
-      mctx.fillRect(bankIt.x*sx-1, bankIt.y*sy-1, 3, 3);
-    }
-
-    mctx.fillStyle="#ffffff";
-    mctx.fillRect(player.x*sx-1, player.y*sy-1, 3, 3);
-
-    const vw=viewWorldW(), vh=viewWorldH();
-    mctx.strokeStyle="rgba(255,255,255,.55)";
-    mctx.strokeRect(camera.x/WORLD_W*mw, camera.y/WORLD_H*mh, vw/WORLD_W*mw, vh/WORLD_H*mh);
-  }
-
-  minimap.addEventListener("mousedown", (e)=>{
-    const rect=minimap.getBoundingClientRect();
-    const sx = (e.clientX-rect.left)/rect.width;
-    const sy = (e.clientY-rect.top)/rect.height;
-    const tx = clamp(Math.floor(sx*W), 0, W-1);
-    const ty = clamp(Math.floor(sy*H), 0, H-1);
-
-    let gx=tx, gy=ty;
-    if (!isWalkable(gx,gy)){
-      let found=null;
-      for (let r=1;r<=6 && !found;r++){
-        for (let oy=-r;oy<=r;oy++){
-          for (let ox=-r;ox<=r;ox++){
-            const nx=tx+ox, ny=ty+oy;
-            if (!inBounds(nx,ny)) continue;
-            if (isWalkable(nx,ny)){ found={x:nx,y:ny}; break; }
-          }
-          if (found) break;
-        }
-      }
-      if (found){ gx=found.x; gy=found.y; } else return;
-    }
-
-    player.target=null;
-    player.action={type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
-    setPathTo(gx,gy);
+  const minimap = document.getElementById("minimap");
+  const { drawMinimap } = createMinimap({
+    minimap,
+    clamp,
+    W,
+    H,
+    map,
+    interactables,
+    player,
+    camera,
+    WORLD_W,
+    WORLD_H,
+    viewWorldW,
+    viewWorldH,
+    isWalkable: navIsWalkable,
+    inBounds: navInBounds,
+    setPathTo
   });
 
   // ---------- Input / world-space mouse ----------
@@ -5953,8 +6239,20 @@ function drawPlayerWeapon(cx, cy, fx, fy){
   opts.push({label:"Walk here", onClick:walkHere});
 
 } else if (ent?.kind==="anvil"){
-  opts.push({label:"Use Anvil", onClick:()=>beginInteraction(ent)});
+  opts.push({label:"Open Smithing", onClick:()=>beginInteraction(ent)});
   opts.push({label:"Examine Anvil", onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
+} else if (ent?.kind==="ladder_down"){
+  opts.push({label:"Climb Down", onClick:()=>beginInteraction(ent)});
+  opts.push({label:"Examine Ladder", onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
+} else if (ent?.kind==="ladder_up"){
+  opts.push({label:"Climb Up", onClick:()=>beginInteraction(ent)});
+  opts.push({label:"Examine Ladder", onClick:()=>examineEntity(ent)});
   opts.push({type:"sep"});
   opts.push({label:"Walk here", onClick:walkHere});
 
@@ -5971,327 +6269,207 @@ function drawPlayerWeapon(cx, cy, fx, fy){
   });
 
   // ---------- Saving / Loading (with migration) ----------
-  function serialize(){
-  const t = now();
-
-  return JSON.stringify({
-    v: 2,
-
-    player:{ x:player.x, y:player.y, name:player.name, class: player.class, color:player.color, hp:player.hp, maxHp:player.maxHp },
-    skills:Object.fromEntries(Object.entries(Skills).map(([k,v])=>[k,v.xp])),
+  const { serialize, deserialize } = createPersistence({
+    now,
+    player,
+    Skills,
     inv,
     bank,
-    zoom: view.zoom,
-    equipment: { ...equipment },
-    quiver: { ...quiver },
-    wallet: { ...wallet },
-
-    groundLoot: Array.from(groundLoot.entries()).map(([k,p]) => {
-  const expiresIn = Number.isFinite(p.expiresAt) ? Math.max(0, Math.floor(p.expiresAt - t)) : GROUND_LOOT_DESPAWN_MS;
-  return [k, Array.from(p.entries()), expiresIn];
-}),
-
-    world: {
-      resources: resources.map(r => ({
-        type: r.type,
-        x: r.x, y: r.y,
-        alive: !!r.alive,
-        respawnIn: (!r.alive && r.respawnAt) ? Math.max(0, Math.floor(r.respawnAt - t)) : 0
-      })),
-      mobs: mobs.map(m => ({
-        type: m.type,
-        name: m.name,
-        x: m.x, y: m.y,
-        homeX: (m.homeX ?? m.x),
-        homeY: (m.homeY ?? m.y),
-        hp: (m.hp|0),
-        maxHp: (m.maxHp|0),
-        alive: !!m.alive,
-        respawnIn: (!m.alive && m.respawnAt) ? Math.max(0, Math.floor(m.respawnAt - t)) : 0,
-        levels: m.levels ?? null
-      })),
-      fires: interactables
-        .filter(it => it.type === "fire")
-        .map(it => ({
-          x: it.x, y: it.y,
-          expiresIn: it.expiresAt ? Math.max(0, Math.floor(it.expiresAt - t)) : 0
-        }))
+    view,
+    equipment,
+    quiver,
+    wallet,
+    groundLoot,
+    resources,
+    mobs,
+    interactables,
+    GROUND_LOOT_DESPAWN_MS,
+    seedResources,
+    seedMobs,
+    seedInteractables,
+    MOB_DEFS,
+    DEFAULT_MOB_LEVELS,
+    calcCombatLevelFromLevels,
+    clamp,
+    tileCenter,
+    makeRng,
+    worldState,
+    randInt,
+    placeMob,
+    inBounds: navInBounds,
+    isWalkable: navIsWalkable,
+    map,
+    RIVER_Y,
+    getActiveZone,
+    setActiveZone: (zoneKey) => setActiveZone(zoneKey),
+    getZoneState,
+    CLASS_DEFS,
+    syncPlayerPix,
+    recalcMaxHPFromHealth,
+    clearSlots,
+    Items,
+    GOLD_ITEM_ID,
+    addGold,
+    addToInventory,
+    MAX_BANK,
+    setZoom,
+    manualDropLocks,
+    onZoneChanged: () => {
+      rebuildNavigation();
+      updateCamera();
+    },
+    renderAfterLoad: () => {
+      seedDungeonZone({ forcePopulateMobs: false, migrateLegacyPositions: true });
+      renderSkills();
+      renderInv();
+      renderBank();
+      renderEquipment();
+      renderQuiver();
+      renderHPHUD();
+      updateCamera();
     }
   });
-}
 
+  function loadCharacterSaveById(charId){
+    const saveRow = readSaveDataByCharId(charId);
+    if (!saveRow?.raw) return false;
+    let hasDungeonZoneSave = false;
+    try {
+      const parsed = JSON.parse(saveRow.raw);
+      hasDungeonZoneSave = !!parsed?.zones?.dungeon;
+    } catch {}
 
-  function deserialize(str){
-    const data=JSON.parse(str);
-    // --- World restore (prevents save/load dupes) ---
-    function rebuildWorldFromSave(){
-      const t0 = now();
+    setActiveCharacterId(charId);
+    const profile = getStoredCharacterProfile(charId);
+    applyCharacterProfileToPlayer(profile);
 
-      // wipe current world so we don't keep fires/mobs from the "future"
-      resources.length = 0;
-      mobs.length = 0;
-      interactables.length = 0;
-
-      // resources
-      if (Array.isArray(data?.world?.resources)){
-        for (const r of data.world.resources){
-          if (!r) continue;
-          resources.push({
-            type: r.type,
-            x: r.x|0,
-            y: r.y|0,
-            alive: !!r.alive,
-            respawnAt: (!r.alive && (r.respawnIn|0) > 0) ? (t0 + (r.respawnIn|0)) : 0
-          });
-        }
-      } else {
-        seedResources();
-      }
-
-      // mobs
-      if (Array.isArray(data?.world?.mobs)){
-        for (const mm of data.world.mobs){
-          if (!mm) continue;
-
-          const def = MOB_DEFS[mm.type] ?? { name: mm.type, hp: 12, levels: {} };
-          const lvls = { ...DEFAULT_MOB_LEVELS, ...(mm.levels || def.levels || {}) };
-          const combatLevel = calcCombatLevelFromLevels(lvls);
-
-          const x = mm.x|0, y = mm.y|0;
-          const maxHp = Math.max(1, (mm.maxHp|0) || (def.hp|0) || 12);
-          const hp = clamp((mm.hp|0) || maxHp, 0, maxHp);
-
-          const mob = {
-            type: mm.type,
-            name: mm.name || def.name || mm.type,
-            x, y,
-            homeX: (mm.homeX ?? x)|0,
-            homeY: (mm.homeY ?? y)|0,
-
-            hp,
-            maxHp,
-            alive: !!mm.alive,
-            respawnAt: (!mm.alive && (mm.respawnIn|0) > 0) ? (t0 + (mm.respawnIn|0)) : 0,
-
-            // reset combat AI state on load
-            target: null,
-            provokedUntil: 0,
-            aggroUntil: 0,
-            attackCooldownUntil: 0,
-            moveCooldownUntil: 0,
-
-            levels: lvls,
-            combatLevel
-          };
-
-          // smooth movement state
-          const c = tileCenter(x, y);
-          mob.px = c.cx; mob.py = c.cy;
-
-          mobs.push(mob);
-        }
-      } else {
-        seedMobs();
-      }
-
-      // always restore static interactables (bank/vendor)
-      seedInteractables();
-
-      // Save migration: inject the goblin pocket for older saves that predate goblins.
-      if (!mobs.some(m => m && m.type === "goblin")){
-        const goblinSeedRng = makeRng(worldState.seed ^ 0x77C4D91F);
-        const anchorX = 37;
-        const anchorY = 13;
-        const desired = 4;
-        let placed = 0;
-
-        function tileOkForLoadedGoblin(x,y){
-          if (!inBounds(x,y)) return false;
-          if (!isWalkable(x,y)) return false;
-          if (map[y][x] !== 0) return false;
-          if (y > (RIVER_Y - 5)) return false;
-          if (Math.abs(x - anchorX) > 7 || Math.abs(y - anchorY) > 5) return false;
-          if (resources.some(r => r.alive && r.x===x && r.y===y)) return false;
-          if (interactables.some(it => it.x===x && it.y===y)) return false;
-          if (mobs.some(m => m.alive && m.x===x && m.y===y)) return false;
-          return true;
-        }
-
-        for (let a=0; a<4000 && placed<desired; a++){
-          const x = anchorX + randInt(goblinSeedRng, -7, 7);
-          const y = anchorY + randInt(goblinSeedRng, -5, 5);
-          if (!tileOkForLoadedGoblin(x,y)) continue;
-          placeMob("goblin", x, y);
-          placed++;
-        }
-      }
-
-      // restore saved fires
-      if (Array.isArray(data?.world?.fires)){
-        for (const f of data.world.fires){
-          if (!f) continue;
-          const born = t0;
-          const expiresIn = Math.max(0, f.expiresIn|0);
-          interactables.push({
-            type: "fire",
-            x: f.x|0,
-            y: f.y|0,
-            createdAt: born,
-            expiresAt: expiresIn ? (t0 + expiresIn) : (t0 + 60000)
-          });
-        }
-      }
-    }
-
-
-    if (data?.player){
-      player.x=data.player.x|0; player.y=data.player.y|0;
-      player.name=String(data.player.name||player.name).slice(0,14);
-
-      const cls = data.player.class;
-      player.class = (cls && CLASS_DEFS[cls]) ? cls : (player.class || "Warrior");
-      player.color = data.player.color || (CLASS_DEFS[player.class]?.color ?? player.color);
-
-      player.maxHp = (data.player.maxHp|0) || player.maxHp;
-      player.hp = (data.player.hp|0) || player.maxHp;
-
-      syncPlayerPix();
-      player.path=[];
-      player.target=null;
-      player.action={type:"idle", endsAt:0, total:0, label:"Idle", onComplete:null};
-    rebuildWorldFromSave();
-
-    }
-
-    if (data?.skills){
-      for (const k of Object.keys(Skills)){
-        if (typeof data.skills[k]==="number") Skills[k].xp = data.skills[k]|0;
-      }
-
-      // Migrate old Combat XP â†’ Accuracy/Power/Defense/Ranged (25% each)
-      if (typeof data.skills.combat === "number"){
-        const c = Math.max(0, data.skills.combat|0);
-        const q = Math.floor(c/4);
-        const rem = c - q*4;
-        Skills.accuracy.xp += q;
-        Skills.power.xp    += q + rem;
-        Skills.defense.xp  += q;
-        Skills.ranged.xp   += q;
-      }
-    }
-
-    // Recalc max HP from health level (ignore saved maxHp if inconsistent)
-    recalcMaxHPFromHealth();
-    player.hp = clamp(player.hp, 0, player.maxHp);
-
-    // Quiver
-    quiver.wooden_arrow = 0;
-    if (data?.quiver && typeof data.quiver.wooden_arrow === "number"){
-      quiver.wooden_arrow = Math.max(0, data.quiver.wooden_arrow|0);
-    }
-    // Wallet
-    wallet.gold = 0;
-    if (data?.wallet && typeof data.wallet.gold === "number"){
-      wallet.gold = Math.max(0, data.wallet.gold|0);
-    }
-
-
-    if (Array.isArray(data?.inv)){
-      clearSlots(inv);
-      for (const s of data.inv){
-        if (!s) continue;
-        const rawId = s.id;
-        const id = (rawId === "bronze_arrow") ? "wooden_arrow" : rawId;
-        const item = Items[id];
-        if (!item) continue;
-
-        const qty = Math.max(1, (s.qty|0) || 1);
-
-               // route gold to wallet; keep ammo in inventory if it was saved there
-        if (id === GOLD_ITEM_ID){
-          addGold(qty);
-        } else {
-          addToInventory(id, qty, { forceInventory: item.ammo });
-        }
-
-      }
-    }
-
-    if (Array.isArray(data?.bank)){
-      clearSlots(bank);
-      for (let i=0;i<Math.min(MAX_BANK, data.bank.length); i++){
-        const s = data.bank[i];
-        if (!s) { bank[i]=null; continue; }
-        const id = (s.id === "bronze_arrow") ? "wooden_arrow" : s.id;
-        const item = Items[id];
-        if (!item) { bank[i]=null; continue; }
-        const qty = Math.max(1, (s.qty|0) || 1);
-                if (id === GOLD_ITEM_ID){
-          addGold(qty);
-          bank[i] = null;
-        } else {
-          bank[i] = { id, qty };
-        }
-
-      }
-    }
-
-    if (data?.equipment){
-      equipment.weapon = data.equipment.weapon ?? null;
-      equipment.offhand = data.equipment.offhand ?? null;
-
-      if (equipment.weapon && (!Items[equipment.weapon] || Items[equipment.weapon].ammo)) equipment.weapon = null;
-      if (equipment.offhand && (!Items[equipment.offhand] || Items[equipment.offhand].ammo)) equipment.offhand = null;
-    }
-
-    if (typeof data?.zoom==="number") setZoom(data.zoom);
-
-    // Ground loot
-    groundLoot.clear();
-manualDropLocks.clear();
-
-    if (Array.isArray(data?.groundLoot)){
-      for (const row of data.groundLoot){
-  if (!Array.isArray(row) || row.length < 2) continue;
-
-  const k = row[0];
-  const entries = row[1];
-  const expiresIn = (row.length >= 3) ? (row[2]|0) : GROUND_LOOT_DESPAWN_MS;
-
-  if (!k || !Array.isArray(entries)) continue;
-
-  const pile = new Map();
-  pile.createdAt = t0;
-  pile.expiresAt = t0 + Math.max(0, expiresIn);
-
-  for (const [id,qty] of entries){
-    if (!Items[id]) continue;
-    pile.set(id, Math.max(0, qty|0));
+    closeLoadCharOverlay();
+    closeStartOverlay();
+    charOverlay.style.display = "none";
+    deserialize(saveRow.raw);
+    seedDungeonZone({ forcePopulateMobs: !hasDungeonZoneSave, migrateLegacyPositions: true });
+    refreshStartOverlay();
+    chatLine(`<span class="good">Loaded ${profile?.name ?? "character"}'s save.</span>`);
+    return true;
   }
 
-  if (pile.size) groundLoot.set(k, pile);
-}
-
-    }
-
-    renderSkills(); renderInv(); renderBank(); renderEquipment(); renderQuiver(); renderHPHUD(); updateCamera();
+  if (startContinueBtn){
+    startContinueBtn.onclick = () => {
+      const activeId = getActiveCharacterId();
+      if (!activeId || !loadCharacterSaveById(activeId)){
+        refreshStartOverlay();
+        return chatLine(`<span class="warn">No save found.</span>`);
+      }
+    };
   }
 
   document.getElementById("saveBtn").onclick=()=>{
-    localStorage.setItem(SAVE_KEY, serialize());
-    chatLine(`<span class="good">Game saved.</span>`);
+    saveCharacterPrefs({ createNew: false });
+    localStorage.setItem(getCurrentSaveKey(), serialize());
+    refreshStartOverlay();
+    const profile = getStoredCharacterProfile();
+    chatLine(`<span class="good">Saved ${profile?.name ?? "character"}.</span>`);
   };
   document.getElementById("loadBtn").onclick=()=>{
-    const s=localStorage.getItem(SAVE_KEY);
-    if (!s) return chatLine(`<span class="warn">No save found.</span>`);
-    deserialize(s);
-    chatLine(`<span class="good">Game loaded.</span>`);
+    openLoadCharacterOverlay((charId) => {
+      if (!loadCharacterSaveById(charId)){
+        chatLine(`<span class="warn">No save found for that character.</span>`);
+      }
+    });
   };
   document.getElementById("resetBtn").onclick=()=>{
-    localStorage.removeItem(SAVE_KEY);
-    chatLine(`<span class="warn">Save cleared. Choose a character to start fresh.</span>`);
-    openCharCreate(true);
+    localStorage.removeItem(getCurrentSaveKey());
+    refreshStartOverlay();
+    const profile = getStoredCharacterProfile();
+    chatLine(`<span class="warn">Cleared save for ${profile?.name ?? "active character"}.</span>`);
+    openStartOverlay();
   };
+
+  function getDebugState(){
+    return {
+      zone: getActiveZone(),
+      player: {
+        x: player.x | 0,
+        y: player.y | 0,
+        hp: player.hp | 0,
+        maxHp: player.maxHp | 0,
+        class: player.class,
+        name: player.name
+      },
+      counts: {
+        mobs: mobs.length | 0,
+        resources: resources.length | 0,
+        interactables: interactables.length | 0,
+        lootPiles: groundLoot.size | 0
+      },
+      windowsOpen: { ...windowsOpen }
+    };
+  }
+
+  function mountDebugApi(){
+    if (!DEBUG_API_ENABLED) return;
+
+    const api = {
+      testMode: TEST_MODE,
+      getState: () => getDebugState(),
+      getLadders: () => ({
+        overworldDown: { ...OVERWORLD_LADDER_DOWN },
+        dungeonUp: { ...DUNGEON_LADDER_UP }
+      }),
+      newGame: () => {
+        startNewGame();
+        return getDebugState();
+      },
+      setZone: (zoneKey, options = {}) => {
+        const key = String(zoneKey || "").toLowerCase();
+        const spawn = (options?.spawn !== false);
+        const changed = setCurrentZone(key);
+        if (spawn) {
+          const p = defaultSpawnForZone(key);
+          teleportPlayerTo(p.x, p.y, { requireWalkable: false, invulnMs: 1200 });
+        } else {
+          updateCamera();
+        }
+        return { changed, zone: getActiveZone(), ok: (getActiveZone() === key) };
+      },
+      interactTile: (x, y) => {
+        const tx = x | 0;
+        const ty = y | 0;
+        if (!inBounds(tx, ty)) return { ok: false, reason: "out_of_bounds" };
+        const ent = getEntityAt(tx, ty);
+        if (!ent) return { ok: false, reason: "no_entity" };
+        if (ent.kind === "decor") return { ok: false, reason: "decor_only", kind: ent.kind };
+        beginInteraction(ent);
+        return { ok: true, kind: ent.kind };
+      },
+      useLadder: (direction) => useLadder(direction),
+      teleport: (x, y, options = {}) => teleportPlayerTo(x, y, options),
+      saveNow: () => {
+        saveCharacterPrefs({ createNew: false });
+        localStorage.setItem(getCurrentSaveKey(), serialize());
+        return true;
+      },
+      loadNow: () => {
+        const raw = localStorage.getItem(getCurrentSaveKey());
+        if (!raw) return false;
+        deserialize(raw);
+        return true;
+      },
+      clearSave: () => {
+        localStorage.removeItem(getCurrentSaveKey());
+        return true;
+      },
+      tickMs: (ms = 16) => {
+        const dt = clamp((Number(ms) || 0) / 1000, 0, 0.25);
+        update(dt);
+        render();
+        return getDebugState();
+      }
+    };
+
+    window.__classicRpg = api;
+  }
+
   // ---------- Background Music ----------
   const bgm = document.getElementById("bgm");
   const musicToggle = document.getElementById("musicToggle");
@@ -6441,6 +6619,19 @@ if (windowsOpen.vendor && !availability.vendor){
   closeWindow("vendor");
 }
 
+availability.smithing = false;
+for (let i=0; i<interactables.length; i++){
+  const it = interactables[i];
+  if (it.type !== "anvil") continue;
+  if (inRangeOfTile(it.x, it.y, 1.1)){
+    availability.smithing = true;
+    break;
+  }
+}
+if (windowsOpen.smithing && !availability.smithing){
+  closeWindow("smithing");
+}
+
 
 
     // action completion
@@ -6529,6 +6720,7 @@ if (player.hp <= 0) handlePlayerDeath();
     ctx.setTransform(view.zoom,0,0,view.zoom, -camera.x*view.zoom, -camera.y*view.zoom);
 
     drawMap();
+    drawDungeonDecor();
     drawResources();
     drawInteractables();
     drawMobs();
@@ -6544,7 +6736,12 @@ if (player.hp <= 0) handlePlayerDeath();
       } else if (player.target.kind==="mob"){
         const m=mobs[player.target.index];
         if (m?.alive){ tx=m.x; ty=m.y; }
-      } else if (player.target.kind==="bank" || player.target.kind==="vendor"){
+      } else if (
+        player.target.kind==="bank" ||
+        player.target.kind==="vendor" ||
+        player.target.kind==="ladder_down" ||
+        player.target.kind==="ladder_up"
+      ){
         const b=interactables[player.target.index];
         if (b){ tx=b.x; ty=b.y; }
       }
@@ -6577,6 +6774,8 @@ if (player.hp <= 0) handlePlayerDeath();
   // ---------- Boot ----------
   function bootstrap(){
 initWorldSeed();
+    ensureCharacterMigration();
+    getActiveCharacterId();
 
     loadChatUI();
     applyChatUI();
@@ -6593,12 +6792,20 @@ initWorldSeed();
     if (savedChar?.name) player.name = String(savedChar.name).slice(0,14);
 
     startNewGame();
+    mountDebugApi();
 
-    // If bank is open in UI state, ensure it's closed until you are in range
+    // If station windows are open in UI state, ensure they close until in range.
     if (windowsOpen.bank && !availability.bank) windowsOpen.bank = false;
+    if (windowsOpen.smithing && !availability.smithing) windowsOpen.smithing = false;
     applyWindowVis();
 
-    openCharCreate(!savedChar);
+    if (TEST_MODE) {
+      closeStartOverlay();
+      if (charOverlay) charOverlay.style.display = "none";
+      if (loadCharOverlay) loadCharOverlay.style.display = "none";
+    } else {
+      openStartOverlay();
+    }
 
     renderEquipment();
     renderInv();
@@ -6607,10 +6814,12 @@ initWorldSeed();
     renderQuiver();
     renderHPHUD();
 
-    chatLine(`<span class="muted">Tip:</span> Rat training packs are now south of the river. Cross a bridge to reach them early.`);
-    chatLine(`<span class="muted">Tip:</span> The vendor is inside the shop east of the starter castle.`);
-    chatLine(`<span class="muted">Tip:</span> Loot auto-picks up when you stand near it. If full, items stay on the ground.`);
-    chatLine(`<span class="muted">Fletching:</span> Right-click <b>Knife</b> -> Use, then click a <b>Log</b> to fletch arrows into your quiver.`);
+    if (!TEST_MODE) {
+      chatLine(`<span class="muted">Tip:</span> Rat training packs are now south of the river. Cross a bridge to reach them early.`);
+      chatLine(`<span class="muted">Tip:</span> The vendor is inside the shop east of the starter castle.`);
+      chatLine(`<span class="muted">Tip:</span> Loot auto-picks up when you stand near it. If full, items stay on the ground.`);
+      chatLine(`<span class="muted">Fletching:</span> Right-click <b>Knife</b> -> Use, then click a <b>Log</b> to fletch arrows into your quiver.`);
+    }
   }
 
   // ---------- Bank icon initialization ----------

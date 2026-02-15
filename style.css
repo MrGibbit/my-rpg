@@ -216,6 +216,7 @@
 #winSkills{ --minW: 460px; --minH: 460px; }
 #winBank{ --minW: 420px; --minH: 460px; }
 #winVendor{ --minW: 420px; --minH: 460px; }
+#winSmithing{ --minW: 420px; --minH: 460px; }
 #winSettings{ --minW: 320px; --minH: 280px; }
 
 /* Small screens: relax mins */
@@ -224,6 +225,7 @@
   #winSkills{ --minW: 320px; --minH: 320px; }
   #winBank{ --minW: 320px; --minH: 360px; }
   #winVendor{ --minW: 320px; --minH: 360px; }
+  #winSmithing{ --minW: 320px; --minH: 360px; }
 }
 
 
@@ -596,6 +598,12 @@
     }
     button:hover{ background:rgba(255,255,255,.10); }
     button:active{ transform:translateY(1px); }
+    button:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+      background:rgba(255,255,255,.04);
+    }
+    button:disabled:hover{ background:rgba(255,255,255,.04); }
 
     /* ---------- Chat (bottom-left HUD, resizable + collapsible) ---------- */
     .hudChat{
@@ -765,6 +773,27 @@
 
     .ctxmenu .sep{ height:1px; margin:6px 4px; background:rgba(255,255,255,.10); }
 
+    .itemTooltip{
+      position:fixed;
+      left:0;
+      top:0;
+      z-index:10001;
+      pointer-events:none;
+      max-width:260px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(8,12,18,.94);
+      color:var(--text);
+      font-size:12px;
+      line-height:1.35;
+      white-space:pre-line;
+      padding:8px 10px;
+      box-shadow:0 14px 28px rgba(0,0,0,.45);
+      backdrop-filter:blur(4px);
+      transform:translate(0,0);
+    }
+    .itemTooltip.hidden{ display:none; }
+
     /* ---------- Modals (character create + delete confirm) ---------- */
     .overlay{
       position:fixed; inset:0;
@@ -794,6 +823,94 @@
       padding:10px 12px;
       border-radius:12px;
       outline:none;
+    }
+
+    .startModal{ width:min(760px, 94vw); }
+    .startGrid{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:10px;
+      margin:10px 0;
+    }
+    .startCard{
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:12px;
+      background:rgba(0,0,0,.16);
+      padding:10px;
+    }
+    .startHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:8px;
+    }
+    .startHead h3{
+      margin:0;
+      font-size:13px;
+      color:rgba(230,238,247,.94);
+      letter-spacing:.2px;
+    }
+    .startActions{ margin-top:12px; }
+    .loadCharList{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      max-height:min(54vh, 460px);
+      overflow:auto;
+      padding-right:2px;
+    }
+    .loadCharRow{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:12px;
+      background:rgba(0,0,0,.16);
+      padding:10px;
+    }
+    .loadCharMeta{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:3px;
+    }
+    .loadCharTitle{
+      font-size:13px;
+      font-weight:800;
+      color:rgba(230,238,247,.95);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .loadCharSub{
+      font-size:12px;
+      color:var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .loadCharRow .btnrow{
+      flex-wrap:nowrap;
+      gap:6px;
+    }
+
+    @media (max-width: 640px){
+      .startGrid{ grid-template-columns:1fr; }
+      .startActions button{
+        flex:1 1 100%;
+      }
+      .loadCharRow{
+        flex-direction:column;
+        align-items:flex-start;
+      }
+      .loadCharRow .btnrow{
+        width:100%;
+      }
+      .loadCharRow .btnrow button{
+        flex:1 1 0;
+      }
     }
 
     .classPick{ display:flex; gap:8px; flex-wrap:wrap; }

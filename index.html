@@ -16,7 +16,7 @@
   })();
 </script>
 
-<link rel="stylesheet" href="style.css?v=0.4.1">
+<link rel="stylesheet" href="style.css?v=0.4.3">
 
 
 </head>
@@ -262,6 +262,20 @@
       </div>
     </div>
 
+    <div class="window hidden" id="winSmithing" style="left:760px; top:120px; width:520px; height:520px;">
+      <div class="winHeader" id="hdrSmithing">
+        <div class="title">Smithing <span class="pill" id="smithingLevelPill">Smithing Lv 1</span></div>
+        <button class="winClose" data-close="smithing" title="Close">X</button>
+      </div>
+
+      <div class="winBody">
+        <div class="shopPane" id="smithingList"></div>
+        <div class="hint">
+          Recipes are shown for bar types currently in your inventory. Use the furnace to smelt bars first.
+        </div>
+      </div>
+    </div>
+
     <div class="window hidden" id="winShop">
       <div class="winHeader">
         <div class="winTitle">Shop</div>
@@ -339,6 +353,42 @@
       </div>
     </div>
 
+    <!-- Start overlay -->
+    <div id="startOverlay" class="overlay" style="display:none;">
+      <div class="modal startModal">
+        <h2>Choose Your Adventure</h2>
+        <p class="sub">Pick an existing save, continue with your character, or begin a fresh run.</p>
+
+        <div class="startGrid">
+          <section class="startCard">
+            <div class="startHead">
+              <h3>Save Slot</h3>
+              <span class="pill" id="startSaveStatus">No Save</span>
+            </div>
+            <p class="small" id="startSaveMeta">No save data found yet.</p>
+          </section>
+
+          <section class="startCard">
+            <div class="startHead">
+              <h3>Character</h3>
+              <span class="pill" id="startCharStatus">No Character</span>
+            </div>
+            <p class="small" id="startCharMeta">Create a character to start a new game.</p>
+          </section>
+        </div>
+
+        <div class="btnrow startActions">
+          <button id="startContinueBtn">Continue Save</button>
+          <button id="startNewGameBtn">New Game</button>
+          <button id="startNewCharacterBtn">New Character</button>
+        </div>
+
+        <div class="hint">
+          Continue loads your last manual save. New Game starts fresh with your selected character.
+        </div>
+      </div>
+    </div>
+
     <!-- Character creation overlay -->
     <div id="charOverlay" class="overlay" style="display:none;">
       <div class="modal">
@@ -376,6 +426,21 @@
       </div>
     </div>
 
+    <!-- Load Character -->
+    <div id="loadCharOverlay" class="overlay" style="display:none;">
+      <div class="modal startModal">
+        <h2>Load Character</h2>
+        <p class="sub">Choose which character save to load.</p>
+
+        <div id="loadCharList" class="loadCharList"></div>
+        <p id="loadCharEmpty" class="small" style="display:none;">No character saves found.</p>
+
+        <div class="btnrow" style="margin-top:12px;">
+          <button id="loadCharCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Delete Character confirmation -->
     <div id="deleteCharOverlay" class="overlay" style="display:none;">
       <div class="modal">
@@ -392,7 +457,7 @@
 </div>
 <audio id="bgm" src="assets/bgm.mp3" loop preload="auto"></audio>
 
-<script type="module" src="game.js?v=0.4.5"></script>
+<script type="module" src="game.js?v=0.4.7"></script>
 
 
 </body>

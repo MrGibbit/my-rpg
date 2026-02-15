@@ -791,6 +791,7 @@ function consumeFoodFromInv(invIndex){
     const item=Items[id]; if (!item) return false;
     if (id === "bronze_arrow") id = "wooden_arrow";
     qty = Math.max(1, qty|0);
+    normalizeBankStacks();
 
     // Bank always stacks same item ids, regardless of inventory stack rules.
     const si = arr.findIndex(s => s && s.id===id);

@@ -457,25 +457,33 @@ export function createPersistence(deps) {
   function restoreBankFromSave(data) {
     if (!Array.isArray(data?.bank)) return;
     clearSlots(bank);
-    for (let i = 0; i < Math.min(MAX_BANK, data.bank.length); i++) {
+    const totals = new Map();
+    const order = [];
+
+    for (let i = 0; i < data.bank.length; i++) {
       const s = data.bank[i];
-      if (!s) {
-        bank[i] = null;
-        continue;
-      }
+      if (!s) continue;
+
       const id = (s.id === "bronze_arrow") ? "wooden_arrow" : s.id;
       const item = Items[id];
-      if (!item) {
-        bank[i] = null;
-        continue;
-      }
+      if (!item) continue;
+
       const qty = Math.max(1, (s.qty | 0) || 1);
       if (id === GOLD_ITEM_ID) {
         addGold(qty);
-        bank[i] = null;
-      } else {
-        bank[i] = { id, qty };
+        continue;
       }
+
+      if (!totals.has(id)) {
+        totals.set(id, 0);
+        order.push(id);
+      }
+      totals.set(id, (totals.get(id) | 0) + qty);
+    }
+
+    for (let i = 0; i < Math.min(MAX_BANK, order.length); i++) {
+      const id = order[i];
+      bank[i] = { id, qty: totals.get(id) | 0 };
     }
   }
 

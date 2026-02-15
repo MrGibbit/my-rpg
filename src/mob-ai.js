@@ -330,8 +330,15 @@ export function createMobAI(deps) {
       m.moveCooldownUntil = Math.max(m.moveCooldownUntil, t + Math.max(420, Math.floor(atkSpeed * 0.55)));
 
       const roll = rollMobAttack(m);
+      if (roll.brandProc) {
+        if (roll.hit && roll.dmg <= 0) {
+          chatLine(`<span class="bad">Warden's Brand absorbs the blow.</span>`);
+        }
+      }
       if (roll.dmg <= 0) {
-        chatLine(`<span class="muted">${m.name} misses you.</span>`);
+        if (!(roll.hit && roll.brandProc)) {
+          chatLine(`<span class="muted">${m.name} misses you.</span>`);
+        }
         continue;
       }
 

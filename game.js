@@ -146,7 +146,7 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
     { id: "west", x: 44, y: 26 },
     { id: "east", x: 53, y: 26 }
   ];
-  const DUNGEON_WARDEN_SPAWN = { x: 49, y: 29 };
+  const DUNGEON_WARDEN_SPAWN = { x: 48, y: 29 };
   const DUNGEON_LEGACY_MOB_LAYOUTS = [
     [
       { type: "rat", x: 14, y: 10 },
@@ -204,6 +204,19 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
       <path d="M8 2 L12 4 L11 10 L8 13 L5 10 L4 4 Z" fill="#94a3b8"/>
       <path d="M8 3.1 L11 4.5 L10.3 9.5 L8 11.8 L5.7 9.5 L5 4.5 Z" fill="#cbd5e1"/>
       <rect x="7.5" y="4" width="1" height="7" fill="#475569"/>
+    `,
+    crude_shield: `
+      <rect x="3" y="2.5" width="10" height="11" fill="#4e453a"/>
+      <rect x="4" y="3.5" width="8" height="9" fill="#8f7f6a"/>
+      <rect x="5" y="4.4" width="1.4" height="7.2" fill="#231f18"/>
+      <rect x="9.6" y="4.4" width="1.4" height="7.2" fill="#231f18"/>
+      <rect x="7.1" y="4.0" width="1.8" height="8.2" fill="rgba(255,255,255,.12)"/>
+    `,
+    wardens_brand: `
+      <path d="M8 2 L12 4 L11 10 L8 13 L5 10 L4 4 Z" fill="#334155"/>
+      <path d="M8 3.1 L11 4.5 L10.3 9.5 L8 11.8 L5.7 9.5 L5 4.5 Z" fill="#64748b"/>
+      <rect x="7.45" y="4" width="1.1" height="7" fill="#f59e0b"/>
+      <rect x="6" y="6.8" width="4" height="1.1" fill="#fbbf24"/>
     `,
     bow: `
       <path d="M11.7 2.7 C9.8 4.3 9 6.1 9 8 C9 9.9 9.8 11.7 11.7 13.3" fill="none" stroke="#d6a96a" stroke-width="1.6" stroke-linecap="round"/>
@@ -497,7 +510,7 @@ function levelStrokeForCls(cls){
     crude_bar: { id:"crude_bar", name:"Crude Bar", stack:true, icon:icon("bar", "#8b7b64", "#4a4135", "#221d16"), flatIcon:flatIcon("bar") },
     crude_dagger: { id:"crude_dagger", name:"Crude Dagger", stack:false, icon:icon("knife", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("knife"), equipSlot:"weapon", combat:{ style:"melee", att:2, dmg:2 } },
     crude_sword: { id:"crude_sword", name:"Crude Sword", stack:false, icon:icon("sword", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("sword"), equipSlot:"weapon", combat:{ style:"melee", att:2, dmg:2 } },
-    crude_shield: { id:"crude_shield", name:"Crude Shield", stack:false, icon:icon("shield", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("shield"), equipSlot:"offhand", combat:{ style:"any", def:2 } },
+    crude_shield: { id:"crude_shield", name:"Crude Shield", stack:false, icon:icon("crude_shield", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("crude_shield"), equipSlot:"offhand", combat:{ style:"any", def:2 } },
     bone: { id:"bone", name:"Bone", stack:true, icon:icon("bone", "#7d868e", "#4c545c", "#24292e"), flatIcon:flatIcon("bone") },
     bone_meal: {
       id:"bone_meal",
@@ -519,11 +532,11 @@ function levelStrokeForCls(cls){
       id:"wardens_brand",
       name:"Warden's Brand",
       stack:false,
-      hint:"A ward-marked relic forged in the boss wing.",
-      icon:icon("shield", "#64748b", "#334155", "#111827"),
-      flatIcon:flatIcon("shield"),
+      hint:"A ward-marked relic forged in the boss wing. Strengthens you against undead.",
+      icon:icon("wardens_brand", "#64748b", "#334155", "#111827"),
+      flatIcon:flatIcon("wardens_brand"),
       equipSlot:"offhand",
-      combat:{ style:"any", def:5 }
+      combat:{ style:"any", att:1, dmg:1, def:6 }
     },
     xp_lamp: {
       id:"xp_lamp",
@@ -2648,7 +2661,7 @@ const BGM_KEY = "classic_bgm_v1";
 
       if (!s){
         slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
-        slot.title = "";
+        slot.removeAttribute("title");
         delete slot.dataset.tooltip;
       } else {
         const item = Items[s.id];
@@ -2660,7 +2673,7 @@ const BGM_KEY = "classic_bgm_v1";
         `;
         const stats = getItemCombatStatText(s.id);
         const tip = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
-        slot.title = tip;
+        slot.removeAttribute("title");
         slot.dataset.tooltip = tip;
       }
       invGrid.appendChild(slot);
@@ -2871,7 +2884,7 @@ const BGM_KEY = "classic_bgm_v1";
       eqQuiverQty.classList.remove("isHidden");
       if (eqQuiverSlot){
         const tip = `${Items.wooden_arrow?.name ?? "Wooden Arrow"} x${arrows}`;
-        eqQuiverSlot.title = tip;
+        eqQuiverSlot.removeAttribute("title");
         eqQuiverSlot.dataset.tooltip = tip;
       }
     } else {
@@ -2880,7 +2893,7 @@ const BGM_KEY = "classic_bgm_v1";
       eqQuiverQty.textContent = "0";
       eqQuiverQty.classList.add("isHidden");
       if (eqQuiverSlot){
-        eqQuiverSlot.title = "";
+        eqQuiverSlot.removeAttribute("title");
         delete eqQuiverSlot.dataset.tooltip;
       }
     }
@@ -2897,14 +2910,14 @@ const BGM_KEY = "classic_bgm_v1";
       if (eqWeaponSlot){
         const stats = getItemCombatStatText(w);
         const tip = `${name}${stats ? `\n${stats}` : ""}\nClick to unequip`;
-        eqWeaponSlot.title = tip;
+        eqWeaponSlot.removeAttribute("title");
         eqWeaponSlot.dataset.tooltip = tip;
       }
     } else {
       eqWeaponIcon.textContent = "-";
       eqWeaponName.textContent = "Empty";
       if (eqWeaponSlot){
-        eqWeaponSlot.title = "";
+        eqWeaponSlot.removeAttribute("title");
         delete eqWeaponSlot.dataset.tooltip;
       }
     }
@@ -2916,14 +2929,14 @@ const BGM_KEY = "classic_bgm_v1";
       if (eqOffhandSlot){
         const stats = getItemCombatStatText(o);
         const tip = `${name}${stats ? `\n${stats}` : ""}\nClick to unequip`;
-        eqOffhandSlot.title = tip;
+        eqOffhandSlot.removeAttribute("title");
         eqOffhandSlot.dataset.tooltip = tip;
       }
     } else {
       eqOffhandIcon.textContent = "-";
       eqOffhandName.textContent = "Empty";
       if (eqOffhandSlot){
-        eqOffhandSlot.title = "";
+        eqOffhandSlot.removeAttribute("title");
         delete eqOffhandSlot.dataset.tooltip;
       }
     }
@@ -2968,7 +2981,7 @@ const BGM_KEY = "classic_bgm_v1";
       slot.dataset.index = String(i);
       if (!s){
         slot.innerHTML = `<div class="icon">.</div><div class="name">Empty</div>`;
-        slot.title = "";
+        slot.removeAttribute("title");
         delete slot.dataset.tooltip;
       } else {
         const item = Items[s.id];
@@ -2980,7 +2993,7 @@ const BGM_KEY = "classic_bgm_v1";
         `;
         const stats = getItemCombatStatText(s.id);
         const tip = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
-        slot.title = tip;
+        slot.removeAttribute("title");
         slot.dataset.tooltip = tip;
       }
       bankGrid.appendChild(slot);
@@ -3981,8 +3994,8 @@ const BGM_KEY = "classic_bgm_v1";
     carveRect(36, 29, 41, 30, 3);
     carveRect(DUNGEON_WING_ROOM.x0, DUNGEON_WING_ROOM.y0, DUNGEON_WING_ROOM.x1, DUNGEON_WING_ROOM.y1, 3);
 
-    // Center pit and narrow crossing in the wing.
-    carveRect(46, 28, 50, 31, 1);
+    // Center lava pit and narrow crossing in the wing.
+    carveRect(46, 28, 50, 31, 6);
     carveRect(48, 28, 48, 31, 5);
 
     // Side alcove.
@@ -4828,6 +4841,67 @@ if (item.ammo){
               ctx.fillRect(px,py+18,TILE,2);
             }
           }
+        } else if (t===6){
+          // Lava (dungeon wing hazard moat): dark crust edge + bright molten core.
+          const shift = (tAnim + x * 2 + y * 3) % 6;
+          const upLava = (y > 0) && ((map[y - 1][x] | 0) === 6);
+          const dnLava = (y < H - 1) && ((map[y + 1][x] | 0) === 6);
+          const lfLava = (x > 0) && ((map[y][x - 1] | 0) === 6);
+          const rtLava = (x < W - 1) && ((map[y][x + 1] | 0) === 6);
+
+          const rim = 3;
+          const inL = lfLava ? 0 : rim;
+          const inR = rtLava ? 0 : rim;
+          const inT = upLava ? 0 : rim;
+          const inB = dnLava ? 0 : rim;
+          const ix0 = px + inL;
+          const iy0 = py + inT;
+          const iw = TILE - inL - inR;
+          const ih = TILE - inT - inB;
+
+          // Overlap connected lava by 1px to hide transform/subpixel seams between tiles.
+          const bleedL = lfLava ? 1 : 0;
+          const bleedR = rtLava ? 1 : 0;
+          const bleedT = upLava ? 1 : 0;
+          const bleedB = dnLava ? 1 : 0;
+          const mlx0 = ix0 - bleedL;
+          const mly0 = iy0 - bleedT;
+          const mlw = iw + bleedL + bleedR;
+          const mlh = ih + bleedT + bleedB;
+
+          // Base dark cavity.
+          ctx.fillStyle = "#1f140f";
+          ctx.fillRect(px, py, TILE, TILE);
+
+          // Draw crust only on exposed outer edges so connected lava reads as one pool.
+          ctx.fillStyle = "#2f1c15";
+          if (!upLava) ctx.fillRect(px, py, TILE, rim);
+          if (!dnLava) ctx.fillRect(px, py + TILE - rim, TILE, rim);
+          if (!lfLava) ctx.fillRect(px, py, rim, TILE);
+          if (!rtLava) ctx.fillRect(px + TILE - rim, py, rim, TILE);
+
+          // Molten body.
+          ctx.fillStyle = "#ff1e00";
+          ctx.fillRect(mlx0, mly0, mlw, mlh);
+
+          // Animated lava streaks (diagonal-ish segmented bands).
+          for (let row = 0; row < 6; row++){
+            const y0 = mly0 + 2 + row * 4 + ((row + shift) % 2);
+            const xStart = mlx0 + ((row * 3 + shift * 2) % 8);
+            for (let x0 = xStart; x0 < mlx0 + mlw - 4; x0 += 8){
+              ctx.fillStyle = (row % 2 === 0) ? "#ff6a00" : "#ff4200";
+              ctx.fillRect(x0, y0, 5, 2);
+              ctx.fillStyle = "#ffb000";
+              ctx.fillRect(x0 + 1, y0, 2, 1);
+            }
+          }
+
+          // Hot cores.
+          ctx.fillStyle = "rgba(255,217,102,.6)";
+          if (mlw >= 10 && mlh >= 10) {
+            ctx.fillRect(mlx0 + 6 + (shift % 3), mly0 + 6, 3, 2);
+            ctx.fillRect(mlx0 + Math.max(8, mlw - 12), mly0 + Math.max(8, mlh - 10) + (shift % 2), 3, 2);
+          }
         } else if (t===2){
           if (inDungeonZone){
             ctx.fillStyle="#252b33";
@@ -4992,8 +5066,10 @@ if (item.ammo){
           }
         }
 
-        ctx.strokeStyle="rgba(255,255,255,.03)";
-        ctx.strokeRect(px,py,TILE,TILE);
+        if (t !== 6){
+          ctx.strokeStyle="rgba(255,255,255,.03)";
+          ctx.strokeRect(px,py,TILE,TILE);
+        }
       }
     }
   }
@@ -6708,12 +6784,50 @@ function drawPlayerOffhand(cx, cy, fx, fy){
     ctx.fillRect(sx - side * 2.6, sy - 4.4, 1.2, 2.8);
   };
 
+  const drawWardensBrand = ({ rim, face, sigil, strap }) => {
+    // Distinct kite profile so this reads as a boss-tier offhand at a glance.
+    ctx.fillStyle = rim;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 7.4);
+    ctx.lineTo(sx + 6.2, sy - 4.2);
+    ctx.lineTo(sx + 5.1, sy + 4.2);
+    ctx.lineTo(sx, sy + 7.4);
+    ctx.lineTo(sx - 5.1, sy + 4.2);
+    ctx.lineTo(sx - 6.2, sy - 4.2);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 6.0);
+    ctx.lineTo(sx + 4.8, sy - 3.1);
+    ctx.lineTo(sx + 3.9, sy + 3.7);
+    ctx.lineTo(sx, sy + 6.0);
+    ctx.lineTo(sx - 3.9, sy + 3.7);
+    ctx.lineTo(sx - 4.8, sy - 3.1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = strap;
+    ctx.fillRect(sx - 0.9, sy - 5.2, 1.8, 10.4);
+
+    ctx.fillStyle = sigil;
+    ctx.fillRect(sx - 0.8, sy - 4.2, 1.6, 8.6);
+    ctx.fillRect(sx - 2.6, sy - 0.8, 5.2, 1.6);
+
+    ctx.fillStyle = "rgba(251,191,36,.72)";
+    ctx.fillRect(sx - side * 3.0, sy - 4.9, 1.3, 3.0);
+  };
+
   switch (offhandId){
     case "shield":
       drawShield({ rim: "#22423b", face: "#3f7267", boss: "#d1d5db", strap: "#11221e" });
       return;
     case "crude_shield":
       drawCrudeShield({ wood: "#8f7f6a", trim: "#4e453a", strap: "#231f18" });
+      return;
+    case "wardens_brand":
+      drawWardensBrand({ rim: "#111827", face: "#475569", sigil: "#f59e0b", strap: "#1f2937" });
       return;
   }
 
@@ -6965,6 +7079,7 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
       const t=map[ty][tx];
       if (t===0) label="Walk here";
       if (t===1) label="Water";
+      if (t===6) label="Lava";
       const inDungeonZone = (getActiveZone() === ZONE_KEYS.DUNGEON);
       if (t===2) label=(inDungeonZone ? "Rubble" : "Rock Face");
       if (t===3) label="Stone floor";
@@ -7339,6 +7454,8 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     debugApiEnabled: DEBUG_API_ENABLED,
     testMode: TEST_MODE,
     getActiveZone,
+    inv,
+    wallet,
     player,
     mobs,
     resources,
@@ -7360,6 +7477,8 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     getCurrentSaveKey,
     serialize,
     deserialize,
+    getQuestSnapshot,
+    emitQuestEvent: trackQuestEvent,
     clamp,
     update,
     render

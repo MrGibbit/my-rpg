@@ -94,7 +94,7 @@ function makeMapProxy(selectMap) {
 }
 
 // ---------- Overworld map ----------
-// 0 grass (walkable), 1 water (blocked), 2 cliff (blocked), 3 stone floor (walkable), 4 wall (blocked), 5 path/bridge (walkable)
+// 0 grass (walkable), 1 water (blocked), 2 cliff (blocked), 3 stone floor (walkable), 4 wall (blocked), 5 path/bridge (walkable), 6 lava (blocked)
 const overworldMap = zoneWorlds[ZONE_KEYS.OVERWORLD].map;
 
 for (let y = 0; y < H; y++) {
@@ -292,8 +292,8 @@ function buildDungeonTemplate() {
   carveRect(36, 29, 41, 30, 3);
   carveRect(42, 24, 54, 35, 3);
 
-  // Wing pit and crossing.
-  carveRect(46, 28, 50, 31, 1);
+  // Wing lava pit and crossing.
+  carveRect(46, 28, 50, 31, 6);
   carveRect(48, 28, 48, 31, 5);
 
   // Side alcove.

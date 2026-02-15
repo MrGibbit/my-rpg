@@ -61,13 +61,13 @@ export function createContextMenuUI(deps) {
       closeItemTooltip();
       return;
     }
-    openItemTooltip(slot.dataset.tooltip || slot.title || "", e.clientX, e.clientY);
+    openItemTooltip(slot.dataset.tooltip || "", e.clientX, e.clientY);
   }
 
   function showElementTooltip(e) {
     const el = e.currentTarget;
     if (!el) return;
-    openItemTooltip(el.dataset.tooltip || el.title || "", e.clientX, e.clientY);
+    openItemTooltip(el.dataset.tooltip || "", e.clientX, e.clientY);
   }
 
   function openCtxMenu(clientX, clientY, options) {

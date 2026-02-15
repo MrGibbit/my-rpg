@@ -34,6 +34,15 @@ export function createCombatRolls(deps) {
     return Object.values(equipment).filter((id) => typeof id === "string" && id.length > 0);
   }
 
+  function hasWardensBrandEquipped() {
+    return equipment?.offhand === "wardens_brand";
+  }
+
+  function isUndeadMob(mob) {
+    const mobType = String(mob?.type || "");
+    return mobType === "skeleton" || mobType === "skeleton_warden";
+  }
+
   // Gear stats:
   // - style: "melee" | "ranged" | "magic" | "any" (default "any")
   // - att: attack/hit chance bonus
@@ -81,11 +90,16 @@ export function createCombatRolls(deps) {
     const gear = getGearBonuses(style);
     att += gear.att;
     off += gear.dmg;
+    const brandEligible = hasWardensBrandEquipped() && isUndeadMob(mob);
+    if (brandEligible) {
+      att += 2;
+      off += 2;
+    }
 
     const maxHit = maxHitFromOffense(off);
     const hit = rollHit(att, mobDef);
     const dmg = hit ? rollDamageUpTo(maxHit) : 0;
-    return { hit, dmg, maxHit };
+    return { hit, dmg, maxHit, brandProc: brandEligible };
   }
 
   function rollMobAttack(mob) {
@@ -96,8 +110,13 @@ export function createCombatRolls(deps) {
 
     const hit = rollHit(att, playerDef);
     const maxHit = Math.max(1, def.maxHit ?? maxHitFromOffense(off));
-    const dmg = hit ? rollDamageUpTo(maxHit) : 0;
-    return { hit, dmg, maxHit };
+    let dmg = hit ? rollDamageUpTo(maxHit) : 0;
+    let brandProc = false;
+    if (dmg > 0 && hasWardensBrandEquipped() && isUndeadMob(mob)) {
+      dmg = Math.max(0, dmg - 1);
+      brandProc = true;
+    }
+    return { hit, dmg, maxHit, brandProc };
   }
 
   return {

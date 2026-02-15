@@ -54,7 +54,8 @@ export function createMinimap(deps) {
           if (walkable) {
             mctx.fillStyle = (t === 5) ? "#b08a58" : "#dbe7f5"; // walkable room/bridge
           } else {
-            mctx.fillStyle = (t === 1) ? "#1b3045" : "#060a10"; // blocked wall/pit
+            if (t === 6) mctx.fillStyle = "#f97316"; // lava
+            else mctx.fillStyle = (t === 1) ? "#1b3045" : "#060a10"; // blocked wall/pit
           }
         } else {
           if (t === 0) mctx.fillStyle = "#12301e";

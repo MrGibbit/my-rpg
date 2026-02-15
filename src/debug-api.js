@@ -3,6 +3,8 @@ export function createDebugAPI(deps) {
     debugApiEnabled,
     testMode,
     getActiveZone,
+    inv,
+    wallet,
     player,
     mobs,
     resources,
@@ -24,10 +26,23 @@ export function createDebugAPI(deps) {
     getCurrentSaveKey,
     serialize,
     deserialize,
+    getQuestSnapshot,
+    emitQuestEvent,
     clamp,
     update,
     render
   } = deps;
+
+  function getInventoryQty(itemId) {
+    const id = String(itemId || "");
+    if (!id || !Array.isArray(inv)) return 0;
+    let total = 0;
+    for (const slot of inv) {
+      if (!slot || String(slot.id || "") !== id) continue;
+      total += Math.max(0, slot.qty | 0);
+    }
+    return total;
+  }
 
   function getDebugState() {
     return {
@@ -56,6 +71,22 @@ export function createDebugAPI(deps) {
     const api = {
       testMode,
       getState: () => getDebugState(),
+      getQuests: () => {
+        if (typeof getQuestSnapshot !== "function") return null;
+        return getQuestSnapshot();
+      },
+      questEvent: (payload) => {
+        if (!payload || typeof payload !== "object" || typeof emitQuestEvent !== "function") {
+          return { ok: false };
+        }
+        emitQuestEvent(payload);
+        return {
+          ok: true,
+          quests: (typeof getQuestSnapshot === "function") ? getQuestSnapshot() : null
+        };
+      },
+      getItemQty: (itemId) => getInventoryQty(itemId),
+      getGold: () => Math.max(0, wallet?.gold | 0),
       getLadders: () => ({
         overworldDown: { ...overworldLadderDown },
         dungeonUp: { ...dungeonLadderUp }

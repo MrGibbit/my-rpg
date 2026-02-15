@@ -3,11 +3,11 @@
 Use this file as the live notes while building.
 
 ## Current (Unreleased)
-- Version: `v0.4.5`
+- Version: `v0.4.6`
 - Date: `February 15, 2026`
 
 ```md
-# Classic RPG - v0.4.5 (Draft)
+# Classic RPG - v0.4.6 (Draft)
 
 ## Quest System + Journal UI
 - Added a new Quests toolbar button and full Quest Journal window.
@@ -77,10 +77,38 @@ Use this file as the live notes while building.
   - opening the Quests window
   - Quartermaster interaction (`quest_npc`)
   - sealed gate interaction in dungeon (`sealed_gate`)
+- Added dedicated quest regression suite (`tests/quests.spec.js`) covering:
+  - full `first_watch` + `ashes_under_the_keep` progression
+  - mid-quest save/load persistence checks
+  - guardrails for sealed gate denial without key fragment
+  - guardrails for non-duplicating quest rewards after save/load
+
+## Test/Dev Tooling
+- Extended debug API in `src/debug-api.js` with test helpers:
+  - `getQuests()`
+  - `questEvent(...)`
+  - `getItemQty(...)`
+  - `getGold()`
+- Wired `game.js` to expose these hooks only when debug API is enabled.
+
+## Repo Hygiene + Versioning
+- Added `.gitignore` entries for:
+  - `node_modules/`
+  - `test-results/`
+  - `.server-*.log`
+- Bumped `package.json` version from `0.4.5-dev` to `0.4.6-dev`.
+
+## Warden's Brand Upgrade
+- Kept `Warden's Brand` as an offhand shield item and improved combat stats:
+  - now grants `+1 ACC`, `+1 DMG`, `+6 DEF`
+- Added Warden's Brand passive combat effects in `src/combat-rolls.js`:
+  - bonus accuracy + damage versus undead (`skeleton`, `skeleton_warden`)
+  - reduces incoming undead hit damage by 1
+- Added dedicated equipped offhand sprite rendering for `wardens_brand` in `game.js` so it is visibly distinct from base shields.
 ```
 
 ## Posted
-- `v0.4.4` has already been posted.
+- `v0.4.5` has already been posted.
 
 ### Internal Notes
 - Keep this section updated as work happens.

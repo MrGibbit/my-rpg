@@ -582,8 +582,8 @@ function levelStrokeForCls(cls){
     crude_helm: { id:"crude_helm", name:"Crude Helm", stack:false, icon:icon("ore_crude", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("ore_crude"), equipSlot:"head", equipVisual:{ key:"helm_crude", layer:"head" }, combat:{ style:"any", def:1 } },
     crude_legs: { id:"crude_legs", name:"Crude Legs", stack:false, icon:icon("bar_crude", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("bar_crude"), equipSlot:"legs", equipVisual:{ key:"legs_crude", layer:"legs" }, combat:{ style:"any", def:1 } },
     crude_body: { id:"crude_body", name:"Crude Body", stack:false, icon:icon("crude_shield", "#8f7f6a", "#4e453a", "#231f18"), flatIcon:flatIcon("crude_shield"), equipSlot:"body", equipVisual:{ key:"body_crude", layer:"body" }, combat:{ style:"any", def:2 } },
-    iron_dagger: { id:"iron_dagger", name:"Iron Dagger", stack:false, icon:icon("knife", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("knife"), equipSlot:"weapon", combat:{ style:"melee", att:3, dmg:3 } },
-    iron_sword: { id:"iron_sword", name:"Iron Sword", stack:false, icon:icon("sword", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("sword"), equipSlot:"weapon", combat:{ style:"melee", att:3, dmg:4 } },
+    iron_dagger: { id:"iron_dagger", name:"Iron Dagger", stack:false, icon:icon("knife", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("knife"), equipSlot:"weapon", req:{ accuracy:5 }, combat:{ style:"melee", att:3, dmg:3 } },
+    iron_sword: { id:"iron_sword", name:"Iron Sword", stack:false, icon:icon("sword", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("sword"), equipSlot:"weapon", req:{ accuracy:10 }, combat:{ style:"melee", att:3, dmg:4 } },
     iron_shield: { id:"iron_shield", name:"Iron Shield", stack:false, icon:icon("shield", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("shield"), equipSlot:"offhand", equipVisual:{ key:"iron_shield", layer:"offhand" }, combat:{ style:"any", def:3 } },
     iron_helm: { id:"iron_helm", name:"Iron Helm", stack:false, icon:icon("ore_iron", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("ore_iron"), equipSlot:"head", equipVisual:{ key:"helm_iron", layer:"head" }, combat:{ style:"any", def:2 } },
     iron_legs: { id:"iron_legs", name:"Iron Legs", stack:false, icon:icon("bar_iron", "#9ca3af", "#4b5563", "#1f2937"), flatIcon:flatIcon("bar_iron"), equipSlot:"legs", equipVisual:{ key:"legs_iron", layer:"legs" }, combat:{ style:"any", def:2 } },
@@ -3776,10 +3776,10 @@ const BGM_KEY = "classic_bgm_v1";
 
 
     if (player.class === "Warrior"){
-      addToInventory("sword", 1);
-      addToInventory("shield", 1);
-      const swordIdx = inv.findIndex(s=>s && s.id==="sword");
-      const shieldIdx = inv.findIndex(s=>s && s.id==="shield");
+      addToInventory("crude_sword", 1);
+      addToInventory("crude_shield", 1);
+      const swordIdx = inv.findIndex(s=>s && s.id==="crude_sword");
+      const shieldIdx = inv.findIndex(s=>s && s.id==="crude_shield");
       if (swordIdx>=0) equipFromInv(swordIdx);
       if (shieldIdx>=0) equipFromInv(shieldIdx);
     } else if (player.class === "Ranger"){

@@ -146,8 +146,8 @@ export const DEFAULT_VENDOR_STOCK = [
   { id: "pick", price: 25, bulk: [1] },
   { id: "hammer", price: 5, bulk: [1] },
   { id: "staff", price: 45, bulk: [1] },
-  { id: "sword", price: 60, bulk: [1] },
-  { id: "shield", price: 60, bulk: [1] },
+  { id: "crude_sword", price: 60, bulk: [1] },
+  { id: "crude_shield", price: 60, bulk: [1] },
   { id: "bow", price: 75, bulk: [1] }
 ];
 

@@ -4,7 +4,7 @@ Use this file as the live notes while building.
 
 ## Current (Unreleased)
 - Version: `v0.4.6`
-- Date: `February 15, 2026`
+- Date: `February 16, 2026`
 
 ```md
 # Classic RPG - v0.4.6 (Draft)
@@ -38,6 +38,14 @@ Use this file as the live notes while building.
   - bonus player hit chance/damage versus `skeleton` and `skeleton_warden`
   - reduces incoming undead damage by 1
 - Added dedicated equipped offhand visual treatment for Warden's Brand.
+
+## Armor Mitigation Tuning
+- Updated armor behavior so defense now improves survivability in two ways:
+  - increases enemy miss chance (existing behavior)
+  - reduces damage taken from landed hits (new behavior)
+- Added a small per-hit mitigation based on equipped total DEF, making crude and iron sets feel meaningfully different in sustain.
+- Added combat log feedback for full negation cases:
+  - `Your armor blocks the blow.`
 
 ## Tests + Dev Tooling
 - Expanded smoke test coverage for blacksmith upgrade flow and persistence.

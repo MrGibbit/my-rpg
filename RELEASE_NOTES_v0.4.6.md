@@ -5,6 +5,7 @@ Release drop: February 15, 2026
 - Refactored equipment visuals into a data-driven system with shared visual rules.
 - Added Blacksmith Torren and forge bank chest upgrade flow with persistence.
 - Upgraded Warden's Brand combat effects and equipped visual treatment.
+- Tuned armor combat impact so defense now mitigates landed-hit damage in addition to miss chance.
 - Expanded regression and smoke coverage for release-critical flows.
 
 ## Equipment Visual Overhaul (Armor + Weapons)
@@ -36,6 +37,12 @@ Release drop: February 15, 2026
   - bonus player hit chance/damage versus `skeleton` and `skeleton_warden`
   - reduces incoming undead damage by 1
 - Added dedicated equipped offhand visual treatment for Warden's Brand.
+
+## Armor Mitigation Tuning
+- Updated armor so defense now contributes both to enemy miss chance and damage reduction on landed hits.
+- Added per-hit reduction scaling from total equipped DEF to strengthen gear progression sustain.
+- Added combat text when armor fully negates a landed hit:
+  - `Your armor blocks the blow.`
 
 ## Tests and Dev Tooling
 - Expanded smoke coverage for blacksmith upgrade flow and persistence.

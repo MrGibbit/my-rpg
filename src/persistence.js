@@ -39,6 +39,7 @@ export function createPersistence(deps) {
     GOLD_ITEM_ID,
     addGold,
     addToInventory,
+    MAX_SKILL_XP,
     MAX_BANK,
     BANK_START_SLOTS,
     getBankCapacity,
@@ -438,8 +439,13 @@ export function createPersistence(deps) {
 
   function restoreSkillsFromSave(data) {
     if (!data?.skills) return;
+
+    function clampSkillXp(xp) {
+      return Math.max(0, Math.min(MAX_SKILL_XP, xp | 0));
+    }
+
     for (const k of Object.keys(Skills)) {
-      if (typeof data.skills[k] === "number") Skills[k].xp = data.skills[k] | 0;
+      if (typeof data.skills[k] === "number") Skills[k].xp = clampSkillXp(data.skills[k]);
     }
 
     // Migrate old Combat XP -> Accuracy/Power/Defense/Ranged (25% each)
@@ -447,10 +453,10 @@ export function createPersistence(deps) {
       const c = Math.max(0, data.skills.combat | 0);
       const q = Math.floor(c / 4);
       const rem = c - q * 4;
-      Skills.accuracy.xp += q;
-      Skills.power.xp += q + rem;
-      Skills.defense.xp += q;
-      Skills.ranged.xp += q;
+      Skills.accuracy.xp = clampSkillXp(Skills.accuracy.xp + q);
+      Skills.power.xp = clampSkillXp(Skills.power.xp + q + rem);
+      Skills.defense.xp = clampSkillXp(Skills.defense.xp + q);
+      Skills.ranged.xp = clampSkillXp(Skills.ranged.xp + q);
     }
   }
 

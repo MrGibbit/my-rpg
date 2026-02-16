@@ -3,7 +3,7 @@ import {
   TILE, W, H, WORLD_W, WORLD_H, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX, RIVER_Y
 } from "./src/config.js";
 import {
-  levelFromXP, xpToNext, calcCombatLevelFromLevels, getPlayerCombatLevel
+  levelFromXP, xpToNext, calcCombatLevelFromLevels, getPlayerCombatLevel, MAX_SKILL_XP
 } from "./src/skills.js";
 import { createNavigation } from "./src/navigation.js";
 import {
@@ -1297,16 +1297,20 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   function addXP(skillKey, amount){
     const s = Skills[skillKey];
     if (!s || !Number.isFinite(amount) || amount <= 0) return;
+    if ((s.xp | 0) >= MAX_SKILL_XP) return;
     const gain = Math.floor(amount);
     if (gain <= 0) return;
     const skillName = getSkillName(skillKey);
-    const before = levelFromXP(s.xp);
-    s.xp += gain;
-    xpOrbs.onGain(skillKey, gain);
+    const beforeXP = s.xp | 0;
+    const before = levelFromXP(beforeXP);
+    s.xp = Math.min(MAX_SKILL_XP, beforeXP + gain);
+    const appliedGain = (s.xp | 0) - beforeXP;
+    if (appliedGain <= 0) return;
+    xpOrbs.onGain(skillKey, appliedGain);
     // show XP gain (throttled per skill so it doesn't spam)
     const t = now();
     if ((t - (lastSkillXPMsgAt[skillKey] ?? 0)) > 900){
-      chatLine(`<span class="muted">+${gain} ${skillName} XP</span>`);
+      chatLine(`<span class="muted">+${appliedGain} ${skillName} XP</span>`);
       lastSkillXPMsgAt[skillKey] = t;
     }
 
@@ -6784,6 +6788,7 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     GOLD_ITEM_ID,
     addGold,
     addToInventory,
+    MAX_SKILL_XP,
     MAX_BANK,
     BANK_START_SLOTS,
     getBankCapacity,

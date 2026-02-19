@@ -190,5 +190,18 @@ export function seedResources(deps) {
     if (!tileOkForRock(p.x, p.y)) continue;
     if (tooCloseToSameType("rock", p.x, p.y, 1.15)) continue;
     placeRes("rock", p.x, p.y);
+    rocksPlaced++;
+  }
+
+  const IRON_ROCK_TOTAL = 8;
+  let ironPlaced = 0;
+  for (let a = 0; a < 12000 && ironPlaced < IRON_ROCK_TOTAL; a++) {
+    const z = pickZone(ROCK_ZONES);
+    const p = sampleInZone(z);
+    if (!tileOkForRock(p.x, p.y)) continue;
+    if (!nearTileType(p.x, p.y, 2, 1)) continue;
+    if (tooCloseToSameType("iron_rock", p.x, p.y, 1.10)) continue;
+    placeRes("iron_rock", p.x, p.y);
+    ironPlaced++;
   }
 }

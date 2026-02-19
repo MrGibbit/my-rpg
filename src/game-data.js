@@ -1,6 +1,6 @@
 // ========== RIVERMOOR RENOWN SYSTEM ==========
 export const RENOWN_SOURCES = {
-  FIRST_QUEST: 20,
+  FIRST_QUEST: 25,
   SECOND_QUEST: 20,
   FIRST_WARDEN_KILL: 20,
   WARDEN_KILL_SUBSEQUENT: 1,
@@ -18,7 +18,7 @@ export const RENOWN_MILESTONES = {
 };
 
 export const QUEST_RENOWN_REWARDS = {
-  first_watch: { townId: "rivermoor", amount: 20 },
+  first_watch: { townId: "rivermoor", amount: 25 },
   ashes_under_the_keep: { townId: "rivermoor", amount: 20 }
 };
 

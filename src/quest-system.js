@@ -9,7 +9,8 @@ export function createQuestSystem(deps) {
     addToInventory,
     addGroundLoot,
     player,
-    addGold
+    addGold,
+    onQuestCompleted
   } = deps;
 
   const QUESTS = Array.isArray(questDefs) ? questDefs : [];
@@ -256,6 +257,9 @@ export function createQuestSystem(deps) {
       }
     }
 
+    if (typeof onQuestCompleted === "function") {
+      onQuestCompleted(def.id);
+    }
     renderQuests();
     return true;
   }

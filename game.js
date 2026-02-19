@@ -1595,6 +1595,7 @@ function consumeFoodFromInv(invIndex){
     quests: {},     // { quest_id: true } - idempotent flags
     wardens: {}     // { warden_key: { lastGrantedAt: <epoch_ms> } } - timestamp-based cooldown
   };
+  let questRenownSnapshotMissing = false;
 
   function resetRenownGrants() {
     renownGrants.quests = {};
@@ -1720,6 +1721,10 @@ function consumeFoodFromInv(invIndex){
     return getRenownGrantsSnapshot();
   }
   function applyQuestRenownSnapshot(data) {
+    const questBag = (data && typeof data === "object" && data.quests && typeof data.quests === "object")
+      ? data.quests
+      : null;
+    questRenownSnapshotMissing = !questBag || Object.keys(questBag).length === 0;
     applyRenownGrantsSnapshot(data);
   }
   function getWardenDefeatSnapshot() {
@@ -1746,7 +1751,7 @@ function consumeFoodFromInv(invIndex){
     completeQuest: _completeQuest_original,
     trackQuestEvent: _trackQuestEvent_original,
     getQuestSnapshot,
-    applyQuestSnapshot,
+    applyQuestSnapshot: _applyQuestSnapshot_original,
     handleQuartermasterTalk,
     npcHasPendingQuestMarker
   } = createQuestSystem({
@@ -1759,8 +1764,32 @@ function consumeFoodFromInv(invIndex){
     addToInventory,
     addGroundLoot,
     player,
-    addGold
+    addGold,
+    onQuestCompleted: (questId) => {
+      grantQuestRenown(questId);
+      if (String(questId) === "first_watch") {
+        chatLine("<span class=\"muted\">The people of Rivermoor seem to trust you more. Perhaps the Mayor could use your help rebuilding the town.</span>");
+      }
+    }
   });
+
+  function grantRetroactiveQuestRenown() {
+    const rewardKeys = Object.keys(QUEST_RENOWN_REWARDS || {});
+    if (!rewardKeys.length) return;
+    for (const questId of rewardKeys) {
+      if (isQuestCompleted(questId)) {
+        grantQuestRenown(questId);
+      }
+    }
+  }
+
+  const applyQuestSnapshot = (data) => {
+    _applyQuestSnapshot_original(data);
+    if (questRenownSnapshotMissing) {
+      questRenownSnapshotMissing = false;
+      grantRetroactiveQuestRenown();
+    }
+  };
 
   // Create wrapped versions for PASS 2 & PASS 3
   const completeQuest = (questId) => {
@@ -4816,6 +4845,14 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
     });
   }
 
+  // ---------- Entity lookup ----------
+  const getEntityAt = createEntityLookup({
+    interactables,
+    getDecorAt,
+    mobs,
+    resources
+  });
+
   // ---------- Inventory use state + item actions ----------
   const {
     setUseState,
@@ -4838,12 +4875,12 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
     addGroundLoot,
     player,
     isIndoors,
-    getEntityAt: (x, y) => getEntityAt(x, y),
+    getEntityAt,
     syncPlayerPix,
     startTimedAction,
     now,
     interactables,
-    isWalkable,
+    isWalkable: navIsWalkable,
     setPathTo,
     onRubXpLamp: openXpLampWindow
   });
@@ -5198,13 +5235,6 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
   resetCharacterImpl = resetCharacterFromZoneFlow;
   startNewGameImpl = startNewGameFromZoneFlow;
 
-  // ---------- Entity lookup ----------
-  const getEntityAt = createEntityLookup({
-    interactables,
-    getDecorAt,
-    mobs,
-    resources
-  });
 
   let ensureWalkIntoRangeAndActImpl = () => {};
   function ensureWalkIntoRangeAndAct(){

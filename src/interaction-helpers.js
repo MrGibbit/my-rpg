@@ -7,7 +7,8 @@ export function createInteractionHelpers(deps) {
     player,
     ensureWalkIntoRangeAndAct,
     setPathTo,
-    getEntityAt
+    getEntityAt,
+    interactables
   } = deps;
 
   function examineEntity(ent) {
@@ -37,10 +38,30 @@ export function createInteractionHelpers(deps) {
         chatLine(`<span class="muted">A veteran quartermaster keeping records and assignments.</span>`);
       }
     }
+    if (ent.kind === "project_npc") {
+      const npcId = String(ent.npcId || "");
+      if (npcId === "blacksmith_torren") {
+        chatLine(`<span class="muted">A master blacksmith overseeing Rivermoor's projects.</span>`);
+      } else if (npcId === "dock_foreman") {
+        chatLine(`<span class="muted">The dock foreman managing construction at the harbor.</span>`);
+      } else if (npcId === "hearth_keeper") {
+        chatLine(`<span class="muted">A caring guardian of the community hearth.</span>`);
+      } else if (npcId === "mayor") {
+        chatLine(`<span class="muted">The mayor overseeing all of Rivermoor's development.</span>`);
+      } else {
+        chatLine(`<span class="muted">A community leader dedicated to Rivermoor's progress.</span>`);
+      }
+    }
     if (ent.kind === "sealed_gate") chatLine(`<span class="muted">A rune-bound gate leading into the old boss wing.</span>`);
     if (ent.kind === "brazier") chatLine(`<span class="muted">An old brazier. It looks tied to the warding ritual in this hall.</span>`);
     if (ent.kind === "fire") chatLine(`<span class="muted">A warm campfire. Great for cooking.</span>`);
-    if (ent.kind === "fish") chatLine(`<span class="muted">A bubbling fishing spot in the river.</span>`);
+    if (ent.kind === "cauldron") chatLine(`<span class="muted">A sturdy cauldron ready for cooking.</span>`);
+    if (ent.kind === "fish") {
+      const spot = interactables[ent.index];
+      const typeLabel = spot?.type === "fish_dock" ? "Advanced Fishing Spot" : "Fishing Spot";
+      const typeDesc = spot?.type === "fish_dock" ? "larger fish" : "common fish";
+      chatLine(`<span class="muted">A bubbling ${typeLabel} in the river, attracting ${typeDesc}.</span>`);
+    }
     if (ent.kind === "furnace") chatLine(`<span class="muted">A sturdy furnace. You can smelt crude or iron ore into crude bars here.</span>`);
     if (ent.kind === "anvil") chatLine(`<span class="muted">A heavy anvil for shaping bars into gear.</span>`);
     if (ent.kind === "ladder_down") chatLine(`<span class="muted">A ladder descending into darkness.</span>`);

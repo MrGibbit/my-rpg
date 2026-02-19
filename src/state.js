@@ -108,6 +108,20 @@ for (let x = 2; x < W - 2; x++) {
   overworldMap[RIVER_Y + 1][x] = 1;
 }
 
+// Local river widening in dock region (x=28-34)
+// Adds one extra water row to create space for dock visuals
+if (RIVER_Y < H - 4) {
+  for (let x = 28; x <= 34; x++) {
+    if (x < W) {
+      overworldMap[RIVER_Y + 2][x] = 1;
+    }
+  }
+}
+
+// Dock platform - make the dock tile walkable (grass instead of water)
+overworldMap[RIVER_Y][31] = 0;  // Dock platform at (31, 22) where player stands
+// Fishing spot at (31, 23) stays as water from the base river loop
+
 function stampCastle(tileMap, x0, y0, w, h) {
   for (let y = y0; y < y0 + h; y++) {
     for (let x = x0; x < x0 + w; x++) {
@@ -489,5 +503,6 @@ export const player = {
   facing: { x: 0, y: 1 },
 
   _sparked: false,
-  _lastRangeMsgAt: 0
+  _lastRangeMsgAt: 0,
+  _hasSeenTownOnboarding: false  // Tracks if town onboarding modal has been shown
 };

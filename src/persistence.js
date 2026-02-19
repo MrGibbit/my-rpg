@@ -51,7 +51,15 @@ export function createPersistence(deps) {
     getQuestSnapshot,
     applyQuestSnapshot,
     getWorldUpgradeSnapshot,
-    applyWorldUpgradeSnapshot
+    applyWorldUpgradeSnapshot,
+    getTownRenownSnapshot,
+    applyTownRenownSnapshot,
+    getQuestRenownSnapshot,
+    applyQuestRenownSnapshot,
+    getWardenDefeatSnapshot,
+    applyWardenDefeatSnapshot,
+    getProjectSnapshot,
+    applyProjectSnapshot
   } = deps;
 
   const OVERWORLD_ZONE = "overworld";
@@ -207,6 +215,10 @@ export function createPersistence(deps) {
       wallet: { ...wallet },
       quests: (typeof getQuestSnapshot === "function") ? getQuestSnapshot() : null,
       worldUpgrades: (typeof getWorldUpgradeSnapshot === "function") ? getWorldUpgradeSnapshot() : null,
+      towns: (typeof getTownRenownSnapshot === "function") ? getTownRenownSnapshot() : null,
+      questRenown: (typeof getQuestRenownSnapshot === "function") ? getQuestRenownSnapshot() : null,
+      wardenDefeat: (typeof getWardenDefeatSnapshot === "function") ? getWardenDefeatSnapshot() : null,
+      projects: (typeof getProjectSnapshot === "function") ? getProjectSnapshot() : null,
       zones,
       // Legacy compatibility fields (overworld snapshot)
       groundLoot: overworldSnapshot.groundLoot,
@@ -522,6 +534,22 @@ export function createPersistence(deps) {
 
     if (typeof applyWorldUpgradeSnapshot === "function") {
       applyWorldUpgradeSnapshot(data?.worldUpgrades ?? null);
+    }
+
+    if (typeof applyTownRenownSnapshot === "function") {
+      applyTownRenownSnapshot(data?.towns ?? null);
+    }
+
+    if (typeof applyQuestRenownSnapshot === "function") {
+      applyQuestRenownSnapshot(data?.questRenown ?? null);
+    }
+
+    if (typeof applyWardenDefeatSnapshot === "function") {
+      applyWardenDefeatSnapshot(data?.wardenDefeat ?? null);
+    }
+
+    if (typeof applyProjectSnapshot === "function") {
+      applyProjectSnapshot(data?.projects ?? null);
     }
 
     if (data?.player) {

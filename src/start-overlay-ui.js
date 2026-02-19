@@ -6,7 +6,6 @@ export function createStartOverlayUI(deps) {
     startSaveStatus,
     startSaveMeta,
     startContinueBtn,
-    startNewGameBtn,
     getStoredCharacterProfile,
     getStoredSaveProfile,
     getActiveCharacterId,
@@ -39,7 +38,6 @@ export function createStartOverlayUI(deps) {
     }
 
     if (startContinueBtn) startContinueBtn.disabled = !saveProfile;
-    if (startNewGameBtn) startNewGameBtn.textContent = charProfile ? "New Game" : "Create Character";
   }
 
   function openStartOverlay() {

@@ -47,6 +47,7 @@ export function createActionResolver(deps) {
     onUseLadder,
     onQuestEvent,
     onTalkQuestNpc,
+    onTalkProjectNpc,
     onUseSealedGate,
     onUseDungeonBrazier,
     onMobDefeated
@@ -64,16 +65,21 @@ export function createActionResolver(deps) {
   const FISHING_CATCH_CHANCE_MIN = 0.34;
   const FISHING_CATCH_CHANCE_PER_LEVEL = 0.035;
   const FISHING_CATCH_CHANCE_MAX = 0.82;
-  const FISHING_TIERS = [
-    { level: 85, itemId: "chaos_koi", xp: 74 },
-    { level: 70, itemId: "moonfish", xp: 61 },
-    { level: 55, itemId: "anglerfish", xp: 51 },
-    { level: 40, itemId: "swordfish", xp: 43 },
+  const FISHING_TIERS_STARTER = [
     { level: 30, itemId: "catfish", xp: 36 },
     { level: 20, itemId: "pufferfish", xp: 29 },
     { level: 10, itemId: "clownfish", xp: 22 },
     { level: 1, itemId: "goldfish", xp: 15 }
   ];
+  const FISHING_TIERS_DOCK = [
+    { level: 70, itemId: "moonfish", xp: 61 },
+    { level: 55, itemId: "anglerfish", xp: 51 },
+    { level: 40, itemId: "swordfish", xp: 43 }
+  ];
+
+  function getFishingTierPool(spotType) {
+    return spotType === "fish_dock" ? FISHING_TIERS_DOCK : FISHING_TIERS_STARTER;
+  }
   const AUTO_COOK_ITEM_IDS = [
     "rat_meat",
     "chaos_koi",
@@ -264,6 +270,31 @@ export function createActionResolver(deps) {
     });
   }
 
+  // ---------- Batch Cooking Helpers ----------
+  function findNextCookable(priorityItemId) {
+    // If a specific item is prioritized and cookable, use it
+    if (priorityItemId && COOK_RECIPES[priorityItemId] && hasItem(priorityItemId)) {
+      return priorityItemId;
+    }
+    // Otherwise find the first cookable by priority order
+    return AUTO_COOK_ITEM_IDS.find((itemId) => COOK_RECIPES[itemId] && hasItem(itemId)) || null;
+  }
+
+  function shouldContinueBatchCooking(cookId) {
+    // cookId is the item we just cooked
+    // Return true if we should cook again, false if we should stop
+    if (!cookId) return false;
+    
+    // Find another cookable item
+    const nextCookable = findNextCookable(null);
+    if (!nextCookable) return false;
+
+    // Make sure we have inventory space (at least one slot)
+    if (emptyInvSlots() <= 0) return false;
+
+    return true;
+  }
+
   function ensureWalkIntoRangeAndAct() {
     const t = player.target;
     if (!t) return;
@@ -336,6 +367,28 @@ export function createActionResolver(deps) {
       const npcId = String(npc.npcId || "quartermaster");
       if (typeof onTalkQuestNpc === "function") onTalkQuestNpc(npcId, npc);
       emitQuestEvent({ type: "talk_npc", npcId, qty: 1 });
+      stopAction();
+      return;
+    }
+
+    if (t.kind === "project_npc") {
+      const npc = interactables[t.index];
+      if (!npc) return stopAction();
+
+      if (!inRangeOfTile(npc.x, npc.y, 1.1)) {
+        const adj = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+          .map(([dx, dy]) => ({ x: npc.x + dx, y: npc.y + dy }))
+          .filter((p) => isWalkable(p.x, p.y));
+        if (!adj.length) return stopAction("No path to NPC.");
+        adj.sort((a, c) => (Math.abs(a.x - player.x) + Math.abs(a.y - player.y)) - (Math.abs(c.x - player.x) + Math.abs(c.y - player.y)));
+        setPathTo(adj[0].x, adj[0].y);
+        return;
+      }
+
+      if (player.action.type !== "idle") return;
+
+      const npcId = String(npc.npcId || "");
+      if (typeof onTalkProjectNpc === "function") onTalkProjectNpc(npcId, npc);
       stopAction();
       return;
     }
@@ -553,6 +606,93 @@ export function createActionResolver(deps) {
       return;
     }
 
+    if (t.kind === "cauldron") {
+      const c = interactables[t.index];
+      if (!c) return stopAction();
+
+      if (!inRangeOfTile(c.x, c.y, 1.1)) {
+        const adj = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+          .map(([dx, dy]) => ({ x: c.x + dx, y: c.y + dy }))
+          .filter((p) => isWalkable(p.x, p.y));
+        if (!adj.length) return stopAction("No path to cauldron.");
+        adj.sort((a, c) => (Math.abs(a.x - player.x) + Math.abs(a.y - player.y)) - (Math.abs(c.x - player.x) + Math.abs(c.y - player.y)));
+        setPathTo(adj[0].x, adj[0].y);
+        return;
+      }
+
+      player.facing.x = clamp(c.x - player.x, -1, 1);
+      player.facing.y = clamp(c.y - player.y, -1, 1);
+
+      if (player.action.type !== "idle") return;
+
+      // On first interaction, store the priority item for the batch session
+      if (t._cookPriority === undefined) {
+        const priorityCookable = (useState.activeItemId && COOK_RECIPES[useState.activeItemId] && hasItem(useState.activeItemId))
+          ? useState.activeItemId
+          : null;
+        t._cookPriority = priorityCookable;
+      }
+
+      // Find next cookable, prioritizing the stored item
+      const cookId = findNextCookable(t._cookPriority);
+
+      if (!cookId) {
+        chatLine("Use a raw food item on the cauldron to cook it.");
+        stopAction();
+        return;
+      }
+
+      // Show initial message only on first cook
+      if (player.action.type === "idle" && !player._lastCookMsg) {
+        chatLine("You begin cooking at the cauldron...");
+        player._lastCookMsg = true;
+      }
+
+      const rec = COOK_RECIPES[cookId];
+      startTimedAction("cook", 1400, "Cooking...", () => {
+        if (!removeItemsFromInventory(cookId, 1)) {
+          chatLine(`<span class=\"warn\">You need ${Items[cookId]?.name ?? cookId}.</span>`);
+          stopAction();
+          return;
+        }
+
+        const got = addToInventory(rec.out, 1);
+        emitQuestEvent({ type: "cook_any", inItemId: cookId, outItemId: rec.out, qty: 1 });
+        
+        if (got === 1) {
+          addXP("cooking", rec.xp);
+          chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
+        } else {
+          addGroundLoot(player.x, player.y, rec.out, 1);
+          addXP("cooking", rec.xp);
+          chatLine(`<span class="warn">Inventory full: ${Items[rec.out].name}</span> (+${rec.xp} XP)`);
+        }
+
+        // Check if we should continue batch cooking
+        if (!shouldContinueBatchCooking(cookId)) {
+          // Determine why we're stopping
+          const emptySlots = emptyInvSlots();
+          if (emptySlots <= 0) {
+            chatLine(`<span class="warn">You don't have enough inventory space.</span>`);
+          } else {
+            const nextCookable = findNextCookable(null);
+            if (!nextCookable) {
+              chatLine(`<span class="muted">You have no more raw food to cook.</span>`);
+            }
+          }
+          
+          // Clean up batch session
+          delete t._cookPriority;
+          player._lastCookMsg = false;
+          if (useState.activeItemId === cookId) setUseState(null);
+          stopAction();
+        }
+        // If shouldContinue, leave player.target set and the main loop will call us again
+      });
+
+      return;
+    }
+
     if (t.kind === "fish") {
       const spot = interactables[t.index];
       if (!spot) return stopAction();
@@ -594,7 +734,8 @@ export function createActionResolver(deps) {
           return;
         }
 
-        const fishTier = FISHING_TIERS.find((tier) => lvlNow >= tier.level) || FISHING_TIERS[FISHING_TIERS.length - 1];
+        const tierPool = getFishingTierPool(spot.type);
+        const fishTier = tierPool.find((tier) => lvlNow >= tier.level) || tierPool[tierPool.length - 1];
         const catchId = fishTier.itemId;
         const catchName = Items[catchId]?.name ?? catchId;
         const catchXp = fishTier.xp;

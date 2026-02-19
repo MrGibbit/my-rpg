@@ -378,6 +378,19 @@
       </div>
     </div>
 
+    <div class="window hidden" id="winTownProjects" style="left:380px; top:70px; width:600px; height:520px;">
+      <div class="winHeader" id="hdrTownProjects">
+        <div class="title">Town Projects <span class="pill" id="projectsRenownPill">Renown: 0/70</span></div>
+        <button class="winClose" data-close="townProjects" title="Close">X</button>
+      </div>
+      <div class="winBody">
+        <div class="projectsGrid" id="projectsGrid"></div>
+        <div class="hint">
+          Donate resources to unlock town amenities. Each project requires items and gold. Completion grants +10 renown.
+        </div>
+      </div>
+    </div>
+
     <div class="window hidden" id="winShop">
       <div class="winHeader">
         <div class="winTitle">Shop</div>
@@ -481,12 +494,11 @@
 
         <div class="btnrow startActions">
           <button id="startContinueBtn">Continue Save</button>
-          <button id="startNewGameBtn">New Game</button>
           <button id="startNewCharacterBtn">New Character</button>
         </div>
 
         <div class="hint">
-          Continue loads your last manual save. New Game starts fresh with your selected character.
+          Continue loads your last manual save. New Character opens character creation.
         </div>
       </div>
     </div>
@@ -551,6 +563,22 @@
         <div class="btnrow" style="margin-top:12px;">
           <button id="deleteCharCancel">Cancel</button>
           <button id="deleteCharConfirm">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rivermoor Onboarding Modal -->
+    <div id="townboardingOverlay" class="overlay" style="display:none;">
+      <div class="modal">
+        <h2>Welcome to Rivermoor</h2>
+        <p class="sub">Renown represents Rivermoor's trust in you.</p>
+        <p class="small">You earn renown by:</p>
+        <p class="small">- Completing quests</p>
+        <p class="small">- Defeating major threats</p>
+        <p class="small">- Completing town projects</p>
+        <p class="small">Talk to the Mayor to view town projects and start rebuilding the Dock.</p>
+        <div class="btnrow" style="margin-top:12px;">
+          <button id="townboardingBtn">Got it!</button>
         </div>
       </div>
     </div>

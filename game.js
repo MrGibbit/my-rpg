@@ -3,7 +3,7 @@ import {
   TILE, W, H, WORLD_W, WORLD_H, ZOOM_DEFAULT, ZOOM_MIN, ZOOM_MAX, RIVER_Y
 } from "./src/config.js";
 import {
-  levelFromXP, xpToNext, calcCombatLevelFromLevels, getPlayerCombatLevel, MAX_SKILL_XP
+  levelFromXP, xpForLevel, xpToNext, calcCombatLevelFromLevels, getPlayerCombatLevel, MAX_SKILL_XP
 } from "./src/skills.js";
 import { createNavigation } from "./src/navigation.js";
 import {
@@ -16,10 +16,11 @@ import {
 } from "./src/state.js";
 import {
   COOK_RECIPES, CLASS_DEFS, MOB_DEFS, DEFAULT_VENDOR_STOCK, DEFAULT_VENDOR_SELL_ONLY_PRICES,
-  DEFAULT_MOB_LEVELS, VENDOR_SELL_MULT, QUEST_DEFS, SMELTING_TIERS, MINING_RESOURCE_RULES
+  DEFAULT_MOB_LEVELS, VENDOR_SELL_MULT, QUEST_DEFS, SMELTING_TIERS, MINING_RESOURCE_RULES, QUEST_RENOWN_REWARDS, WARDEN_RENOWN_CONFIG,
+  PROJECT_REQUIREMENTS, isItemInCategory
 } from "./src/game-data.js";
 import {
-  createDecorLookup, stampVendorShopLayout, VENDOR_TILE, DECOR_EXAMINE_TEXT
+  createDecorLookup, stampVendorShopLayout, VENDOR_TILE, DECOR_EXAMINE_TEXT, getDockDecorForState, getHearthDecorForState
 } from "./src/world-layout.js";
 import {
   initWorldSeed as initWorldSeedState, makeRng, randInt, keyXY, inRectMargin, nearTileType as nearTileTypeInMap
@@ -47,10 +48,33 @@ import { createQuestSystem } from "./src/quest-system.js";
 import { createZoneFlow } from "./src/zone-flow.js";
 import { createPlayerGearRenderer } from "./src/player-gear-renderer.js";
 import { applyEquipmentVisualDefaults } from "./src/equipment-visuals.js";
+import {
+  initTownSystem, getTownRenown, grantTownRenown, checkTownMilestones, resetTownState,
+  getTownsSnapshot, applyTownsSnapshot, getTownsRef
+} from "./src/town-system.js";
+import {
+  PROJECT_DEFS, initProjectsSystem, getProjectState, checkProjectUnlocks, fundTownProject,
+  tickProjectBuilds, resetProjectState, getProjectsSnapshot, applyProjectsSnapshot as applyProjectsSnapshotModule, getProjectsRef,
+  applyLegacySmithBankMigration
+} from "./src/town-projects.js";
+import {
+  initDonationSystem,
+} from "./src/town-donations.js";
+
 
 // Keep this local so game.js doesn't hard-fail if a stale cached state module is loaded.
 const vendorShop = { x0: 16, y0: 3, w: 8, h: 6 };
-const getDecorAt = createDecorLookup(startCastle, vendorShop);
+
+function reinitializeDecorLookup() {
+  const dockComplete = getProjectState("rivermoor", "dock") === "complete";
+  const dockDecor = getDockDecorForState(dockComplete);
+  const hearthComplete = getProjectState("rivermoor", "hearth") === "complete";
+  const hearthDecor = getHearthDecorForState(hearthComplete);
+  return createDecorLookup(startCastle, vendorShop, dockDecor, hearthDecor);
+}
+
+// Initialize immediately with broken dock state (will update after projects load)
+let getDecorAt = reinitializeDecorLookup();
 
 // Ensure vendor shop exists even if an older cached state.js is still loaded.
 stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
@@ -59,8 +83,13 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
 
 
   // ---------- Chat ----------
+  const QUERY_FLAG_TRUTHY = new Set(["1", "true", "yes"]);
   const CHAT_LIMIT = 20;
   const chatLogEl = document.getElementById("chatLog");
+
+  function hasQueryFlag(params, key){
+    return QUERY_FLAG_TRUTHY.has(String(params.get(key) || "").toLowerCase());
+  }
 
   function chatLine(html) {
     const nearBottom = (chatLogEl.scrollTop + chatLogEl.clientHeight) >= (chatLogEl.scrollHeight - 24);
@@ -85,13 +114,45 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
   const VIEW_W = canvas.width;
   const VIEW_H = canvas.height;
   const query = new URLSearchParams(window.location.search);
-  const TEST_MODE = ["1", "true", "yes"].includes(String(query.get("test") || "").toLowerCase());
-  const DEBUG_API_ENABLED = TEST_MODE || ["1", "true", "yes"].includes(String(query.get("debug") || "").toLowerCase());
+  const TEST_MODE = hasQueryFlag(query, "test");
+  const DEBUG_API_ENABLED = TEST_MODE || hasQueryFlag(query, "debug");
   const SMITH_BANK_UNLOCK_COST = 10000;
   const SMITHING_FURNACE_TILE = { x: southKeep.x0 + 4, y: southKeep.y0 + 3 };
   const SMITHING_ANVIL_TILE = { x: SMITHING_FURNACE_TILE.x + 2, y: SMITHING_FURNACE_TILE.y };
   const SMITHING_BLACKSMITH_TILE = { x: SMITHING_ANVIL_TILE.x + 2, y: SMITHING_ANVIL_TILE.y };
+  const HEARTH_CAMP_BOUNDS = { x0: 2, y0: 14, x1: 6, y1: 18 };
+  const HEARTH_CAULDRON_TILE = { x: 4, y: 16 };
   const SMITHING_BANK_TILE = { x: SMITHING_ANVIL_TILE.x + 3, y: SMITHING_ANVIL_TILE.y + 1 };
+
+  // ========== PROJECT NPC CONFIGURATION ==========
+  // Central source-of-truth for all Project NPCs.
+  // Note: Coordinates will be determined at placement time from game constants
+  const TOWN_PROJECT_NPC = {
+    blacksmith_torren: {
+      name: "Blacksmith Torren",
+      viewMode: "single",
+      focusProjectId: "storage",
+      variant: "torren"
+    },
+    dock_foreman: {
+      name: "Foreman Garrick",
+      viewMode: "single",
+      focusProjectId: "dock",
+      variant: "garrick"
+    },
+    hearth_keeper: {
+      name: "Mara Emberward",
+      viewMode: "single",
+      focusProjectId: "hearth",
+      variant: "mara"
+    },
+    mayor: {
+      name: "Mayor Alden Fairholt",
+      viewMode: "all",
+      focusProjectId: null,
+      variant: "mayor"
+    }
+  };
 
   // Zoom
   function setZoom(z) {
@@ -125,10 +186,35 @@ stampVendorShopLayout({ map, width: W, height: H, startCastle, vendorShop });
   }
 
   function navInBounds(x, y) { return inBounds(x, y); }
-  function navIsWalkable(x, y) { return isWalkable(x, y); }
+  function navIsWalkable(x, y) {
+    if (!isWalkable(x, y)) return false;
+    if (interactables.some((it) => it.type === "cauldron" && it.x === x && it.y === y)) return false;
+    return true;
+  }
   function navAstar(sx, sy, gx, gy) { return astar(sx, sy, gx, gy); }
 
   rebuildNavigation();
+
+  function isHearthCampTileOpen(x, y) {
+    if (!navInBounds(x, y)) return false;
+    if (!navIsWalkable(x, y)) return false;
+    if (interactables.some((it) => it.x === x && it.y === y)) return false;
+    return true;
+  }
+
+  function getHearthCampCauldronTile() {
+    if (isHearthCampTileOpen(HEARTH_CAULDRON_TILE.x, HEARTH_CAULDRON_TILE.y)) {
+      return { ...HEARTH_CAULDRON_TILE };
+    }
+
+    for (let y = HEARTH_CAMP_BOUNDS.y0; y <= HEARTH_CAMP_BOUNDS.y1; y++) {
+      for (let x = HEARTH_CAMP_BOUNDS.x0; x <= HEARTH_CAMP_BOUNDS.x1; x++) {
+        if (isHearthCampTileOpen(x, y)) return { x, y };
+      }
+    }
+
+    return { ...HEARTH_CAULDRON_TILE };
+  }
 
   const OVERWORLD_LADDER_DOWN = { x: 17, y: 4 };
   const OVERWORLD_RETURN_TILE = { x: 17, y: 5 };
@@ -885,6 +971,14 @@ cooked_chaos_koi: {
   icon: cookedFishIcon("rgb(176,72,34)", "rgb(222,106,46)")
 },
 
+cooked_food: {
+  id:"cooked_food",
+  name:"Cooked Food",
+  heal: 8,
+  stack:true,
+  icon: cookedFishIcon("rgb(146,78,38)", "rgb(180,102,48)")
+},
+
 
 
   };
@@ -1119,7 +1213,196 @@ function consumeFoodFromInv(invIndex){
   return true;
 }
 
+  /**
+   * Count total quantity of an item in inventory
+   * Respects stack property (stacked items can have qty > 1 per slot)
+   */
+  function getInventoryCount(itemId) {
+    let count = 0;
 
+    // Category matching: "cooked_food" counts all cooked_* items
+    if (itemId === "cooked_food") {
+      for (const slot of inv) {
+        if (!slot || !String(slot.id).startsWith("cooked_")) continue;
+        const item = Items[slot.id];
+        if (item?.stack) {
+          count += Math.max(1, slot.qty | 0);
+        } else {
+          count += 1;
+        }
+      }
+      return count;
+    }
+
+    // Direct item match
+    const item = Items[itemId];
+    if (!item) return 0;
+
+    for (const slot of inv) {
+      if (!slot || slot.id !== itemId) continue;
+      if (item.stack) {
+        count += Math.max(1, slot.qty | 0);
+      } else {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Donate items to a project and update UI
+   * Returns { success, reason?, remaining? }
+   */
+  function handleProjectItemDonation(projectId, itemId, qty) {
+    const proj = getProjectsRef()?.rivermoor?.[projectId];
+    if (!proj) return { success: false, reason: "Project not found" };
+
+    const req = PROJECT_REQUIREMENTS[projectId];
+    if (!req || !req.items) {
+      return { success: false, reason: "Project not found" };
+    }
+
+    // Check if this category is required (e.g., "cooked_food")
+    if (!req.items[itemId]) {
+      return { success: false, reason: "Item not required for this project" };
+    }
+
+    qty = Math.max(1, qty | 0);
+    const invCount = getInventoryCount(itemId);
+    if (invCount < qty) {
+      return { success: false, reason: `You only have ${invCount}x ${itemId}` };
+    }
+
+    const donated = (proj.itemsDonated[itemId] | 0);
+    const required = req.items[itemId] | 0;
+    const canDonate = Math.min(qty, Math.max(0, required - donated));
+
+    if (canDonate <= 0) {
+      return { success: false, reason: `You've already donated ${required}x ${itemId}` };
+    }
+
+    // Special handling for categories (e.g., "cooked_food")
+    if (itemId === "cooked_food") {
+      // Remove cooked_* items until we've removed canDonate amount
+      let remaining = canDonate;
+      for (let i = 0; i < inv.length && remaining > 0; i++) {
+        const slot = inv[i];
+        if (!slot || !String(slot.id).startsWith("cooked_")) continue;
+
+        const item = Items[slot.id];
+        const slotQty = item?.stack ? Math.max(1, slot.qty | 0) : 1;
+        const toRemove = Math.min(remaining, slotQty);
+
+        if (item?.stack) {
+          slot.qty = Math.max(0, (slot.qty | 0) - toRemove);
+          if (slot.qty <= 0) delete inv[i]; // Remove empty slot
+        } else {
+          delete inv[i]; // Remove single item
+        }
+
+        remaining -= toRemove;
+      }
+      renderInv();
+    } else {
+      // Remove specific item from inventory
+      if (!removeItemsFromInventory(itemId, canDonate)) {
+        return { success: false, reason: `Couldn't remove ${canDonate}x ${itemId} from inventory` };
+      }
+    }
+
+    // Update donation count
+    proj.itemsDonated[itemId] = (proj.itemsDonated[itemId] | 0) + canDonate;
+
+    // Check if project should auto-complete
+    checkProjectDonationComplete(projectId);
+
+    return { success: true, donated: canDonate };
+  }
+
+  /**
+   * Donate gold to a project
+   * Returns { success, reason?, remaining? }
+   */
+  function handleProjectGoldDonation(projectId, amount) {
+    const proj = getProjectsRef()?.rivermoor?.[projectId];
+    if (!proj) return { success: false, reason: "Project not found" };
+
+    const req = PROJECT_REQUIREMENTS[projectId];
+    if (!req) return { success: false, reason: "Project not found" };
+
+    amount = Math.max(1, amount | 0);
+    const goldRequired = (req.gold | 0) || 0;
+    const goldDonated = (proj.goldDonated | 0);
+    const canDonate = Math.min(amount, Math.max(0, goldRequired - goldDonated));
+
+    if (canDonate <= 0) {
+      return { success: false, reason: `You've already donated all gold for this project` };
+    }
+
+    if (wallet.gold < canDonate) {
+      return { success: false, reason: `You only have ${wallet.gold} gold` };
+    }
+
+    // Spend gold
+    wallet.gold -= canDonate;
+    proj.goldDonated = (proj.goldDonated | 0) + canDonate;
+
+    // Check if project should auto-complete
+    checkProjectDonationComplete(projectId);
+
+    return { success: true, donated: canDonate };
+  }
+
+  /**
+   * Check if all requirements are met and auto-complete project
+   * Grants +10 renown once
+   */
+  function checkProjectDonationComplete(projectId) {
+    const proj = getProjectsRef()?.rivermoor?.[projectId];
+    if (!proj || proj.state === "funded" || proj.state === "complete") return; // Already building or completed
+
+    const req = PROJECT_REQUIREMENTS[projectId];
+    if (!req) return;
+
+    // Check items
+    for (const [itemId, required] of Object.entries(req.items || {})) {
+      const donated = (proj.itemsDonated[itemId] | 0);
+      if (donated < required) return; // Not enough of this item
+    }
+
+    // Check gold
+    const goldRequired = (req.gold | 0) || 0;
+    const goldDonated = (proj.goldDonated | 0);
+    if (goldDonated < goldRequired) return; // Not enough gold
+
+    // All requirements met - start building (don't complete immediately)
+    proj.state = "funded";
+    proj.fundedAt = now();
+    proj.buildTimeMs = PROJECT_DEFS[projectId]?.buildTimeMs || 5000;
+
+    chatLine(`<span class="good">Building started! ${PROJECT_DEFS[projectId]?.name || projectId} will be ready soon.</span>`);
+    renderTownProjectsUI();
+  }
+
+  /**
+   * Apply project completion effects (spawn interactables, etc.)
+   * Mirrors the logic from town-projects.js
+   */
+  function applyProjectEffects(projectId) {
+    if (projectId === "dock") {
+      ensureInteractable("fish_dock", 31, 23);
+      chatLine(`<span class="muted">The reinforced dock attracts larger fish downstream.</span>`);
+    } else if (projectId === "hearth") {
+      const hearthTile = getHearthCampCauldronTile();
+      ensureInteractable("cauldron", hearthTile.x, hearthTile.y);
+      chatLine(`<span class="muted">A new hearth camp now serves Rivermoor's travelers.</span>`);
+    } else if (projectId === "storage") {
+      ensureInteractable("bank", SMITHING_BANK_TILE.x, SMITHING_BANK_TILE.y, {
+        bankTag: "smithing_upgrade"
+      });
+      chatLine(`<span class="muted">A bank chest now sits beside Torren's forge.</span>`);
+    }
+  }
 
 
   // ---------- Bank stacking behavior ----------
@@ -1234,8 +1517,7 @@ function consumeFoodFromInv(invIndex){
     inv[invIndex] = null;
     equipment[slot] = id;
     chatLine(`<span class="good">You equip the ${Items[id]?.name ?? id}.</span>`);
-    renderInv();
-    renderEquipment();
+    renderInventoryAndEquipment();
   }
 
   function unequipSlot(slot){
@@ -1248,8 +1530,7 @@ function consumeFoodFromInv(invIndex){
     equipment[slot] = null;
     addToInventory(id, 1);
     chatLine(`<span class="muted">You unequip the ${Items[id]?.name ?? id}.</span>`);
-    renderInv();
-    renderEquipment();
+    renderInventoryAndEquipment();
   }
 
   // ---------- Melee Training selector ----------
@@ -1277,21 +1558,13 @@ function consumeFoodFromInv(invIndex){
   }
 
   function loadMeleeTraining(){
-    const raw = localStorage.getItem(MELEE_TRAIN_KEY);
-    let parsed = raw;
-    if (raw){
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        parsed = raw;
-      }
-    }
+    const parsed = readStoredJSON(MELEE_TRAIN_KEY, null);
     meleeState.selected = normalizeMeleeTrainingSelection(parsed);
     meleeState.splitCursor = 0;
   }
   function saveMeleeTraining(){
     const selected = getMeleeTrainingSelection();
-    localStorage.setItem(MELEE_TRAIN_KEY, JSON.stringify(selected));
+    writeStoredJSON(MELEE_TRAIN_KEY, selected);
   }
 
   // ---------- Quests ----------
@@ -1315,6 +1588,148 @@ function consumeFoodFromInv(invIndex){
     return !!worldUpgrades.smithBankUnlocked;
   }
 
+  // ========== RENOWN GRANTS SYSTEM (Quest-based & Warden-based) ==========
+  const WARDEN_RENOWN_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+  const renownGrants = {
+    quests: {},     // { quest_id: true } - idempotent flags
+    wardens: {}     // { warden_key: { lastGrantedAt: <epoch_ms> } } - timestamp-based cooldown
+  };
+
+  function resetRenownGrants() {
+    renownGrants.quests = {};
+    renownGrants.wardens = {};
+  }
+
+  function getRenownGrantsSnapshot() {
+    return {
+      quests: { ...renownGrants.quests },
+      wardens: { ...renownGrants.wardens }
+    };
+  }
+
+  function applyRenownGrantsSnapshot(data) {
+    if (!data || typeof data !== "object") {
+      resetRenownGrants();
+      return;
+    }
+    // Restore quest grants
+    renownGrants.quests = (data.quests && typeof data.quests === "object") 
+      ? { ...data.quests } 
+      : {};
+    // Restore warden timestamps
+    renownGrants.wardens = (data.wardens && typeof data.wardens === "object") 
+      ? { ...data.wardens } 
+      : {};
+  }
+
+  /**
+   * Grant renown for completing a quest (idempotent)
+   */
+  function grantQuestRenown(questId) {
+    const questId_str = String(questId || "");
+    if (!questId_str) return false;
+
+    // Check if already granted
+    if (renownGrants.quests[questId_str]) {
+      return false; // Already granted, do nothing
+    }
+
+    // Look up reward config
+    const rewardCfg = QUEST_RENOWN_REWARDS[questId_str];
+    if (!rewardCfg) return false; // Unknown quest
+
+    // Mark as granted
+    renownGrants.quests[questId_str] = true;
+
+    // Grant renown
+    const message = `Quest "${questId_str.replace(/_/g, " ")}" completed.`;
+    const success = grantTownRenown(rewardCfg.townId, rewardCfg.amount, message);
+
+    return success;
+  }
+
+  /**
+   * Grant renown for defeating a warden (repeatable with cooldown)
+   */
+  function grantWardenDefeatRenown(wardenKey = "skeleton_warden") {
+    const key_str = String(wardenKey || "skeleton_warden");
+    const cfg = WARDEN_RENOWN_CONFIG[key_str];
+    if (!cfg) return false; // Unknown warden
+
+    const now_ms = now();
+    const warden_state = renownGrants.wardens[key_str] || {};
+    const lastGrantedAt = warden_state.lastGrantedAt || 0;
+    const msSinceLastGrant = now_ms - lastGrantedAt;
+
+    // If firstKillOnly is set, check if already granted
+    if (cfg.firstKillOnly && renownGrants.wardens[key_str]?.granted) {
+      const remainingMs = cfg.cooldownMs - msSinceLastGrant;
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      if (remainingMs > 0) {
+        chatLine(`<span class="muted">Rivermoor renown can be earned from the ${key_str.replace(/_/g, " ")} again in ~${remainingSec}s.</span>`);
+      }
+      return false;
+    }
+
+    // Check cooldown (if not first kill only)
+    if (!cfg.firstKillOnly && msSinceLastGrant < cfg.cooldownMs) {
+      // Still in cooldown, don't grant
+      const remainingMs = cfg.cooldownMs - msSinceLastGrant;
+      const remainingSec = Math.ceil(remainingMs / 1000);
+      chatLine(`<span class="muted">Rivermoor renown can be earned from the ${key_str.replace(/_/g, " ")} again in ~${remainingSec}s.</span>`);
+      return false;
+    }
+
+    // Update timestamp and mark as granted
+    renownGrants.wardens[key_str] = {
+      lastGrantedAt: now_ms,
+      granted: cfg.firstKillOnly
+    };
+
+    // Grant renown
+    const message = `${key_str.replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase())} defeated.`;
+    const success = grantTownRenown(cfg.townId, cfg.amount, message);
+
+    return success;
+  }
+
+  // Town system moved to modules: src/town-system.js, src/town-projects.js, src/town-donations.js
+  // Wrapper functions for persistence (module functions renamed for backward compatibility)
+  function getTownRenownSnapshot() {
+    return getTownsSnapshot();
+  }
+  function applyTownRenownSnapshot(data) {
+    return applyTownsSnapshot(data);
+  }
+  function getProjectSnapshot() {
+    return getProjectsSnapshot();
+  }
+  function applyProjectSnapshot(data) {
+    applyProjectsSnapshotModule(data);
+    // Migration: Convert legacy smithBankUnlocked to storage project
+    if (isSmithBankUnlocked()) {
+      applyLegacySmithBankMigration(true);
+    }
+    // Reinitialize decor lookup now that projects are updated
+    getDecorAt = reinitializeDecorLookup();
+  }
+
+  // Renown grant tracking (quest-based and warden-based)
+  function getQuestRenownSnapshot() {
+    return getRenownGrantsSnapshot();
+  }
+  function applyQuestRenownSnapshot(data) {
+    applyRenownGrantsSnapshot(data);
+  }
+  function getWardenDefeatSnapshot() {
+    // Warden data is now integrated into renownGrants
+    return null;
+  }
+  function applyWardenDefeatSnapshot(data) {
+    // Warden data is now integrated into renownGrants
+  }
+
   const {
     questList: QUESTS,
     getQuestDefById,
@@ -1328,8 +1743,8 @@ function consumeFoodFromInv(invIndex){
     isQuestObjectiveComplete,
     hasQuestObjectiveToken,
     isQuestReadyToComplete,
-    completeQuest,
-    trackQuestEvent,
+    completeQuest: _completeQuest_original,
+    trackQuestEvent: _trackQuestEvent_original,
     getQuestSnapshot,
     applyQuestSnapshot,
     handleQuartermasterTalk,
@@ -1346,6 +1761,26 @@ function consumeFoodFromInv(invIndex){
     player,
     addGold
   });
+
+  // Create wrapped versions for PASS 2 & PASS 3
+  const completeQuest = (questId) => {
+    const result = _completeQuest_original(questId);
+    if (result) {
+      grantQuestRenown(questId);
+      if (String(questId) === "first_watch") {
+        chatLine("<span class=\"muted\">The people of Rivermoor seem to trust you more. Perhaps the Mayor could use your help rebuilding the town.</span>");
+      }
+    }
+    return result;
+  };
+
+  const trackQuestEvent = (ev) => {
+    const result = _trackQuestEvent_original(ev);
+    if (ev?.type === "kill_mob" && ev?.mobType === "skeleton_warden") {
+      grantWardenDefeatRenown();
+    }
+    return result;
+  };
 
   function unlockSmithingBankUpgrade(){
     if (isSmithBankUnlocked()) return false;
@@ -1372,14 +1807,38 @@ function consumeFoodFromInv(invIndex){
     return true;
   }
 
-  function talkBlacksmithTorren(){
-    if (isSmithBankUnlocked()){
-      chatLine(`<span class="muted">Blacksmith Torren:</span> Let's see what else we can improve.`);
-    } else {
-      chatLine(`<span class="muted">Blacksmith Torren:</span> I can reinforce this forge. Pick an upgrade.`);
+  // ========== PROJECT NPC INTERACTION ==========
+  function openTownProjectsFromNpc(npcId) {
+    const config = TOWN_PROJECT_NPC[npcId];
+    if (!config) {
+      chatLine(`<span class="muted">They have nothing special to say.</span>`);
+      return;
     }
-    openWindow("blacksmith");
-    renderBlacksmithUI();
+
+    // Emit chat message based on NPC
+    if (npcId === "blacksmith_torren") {
+      chatLine(`<span class="muted">Blacksmith Torren:</span> Let's see what we can build for Rivermoor. Here are the projects.`);
+    } else if (npcId === "dock_foreman") {
+      chatLine(`<span class="muted">Foreman Garrick Tidewell:</span> The dock is crucial for Rivermoor. Let me show you our progress.`);
+    } else if (npcId === "hearth_keeper") {
+      chatLine(`<span class="muted">Mara Emberward:</span> The hearth represents the heart of our community. See what we're building here.`);
+    } else if (npcId === "mayor") {
+      chatLine(`<span class="muted">Mayor Alden Fairholt:</span> Let me show you all the improvements we're working on for Rivermoor.`);
+    }
+
+    // Ensure projects are unlocked based on current renown before rendering
+    checkProjectUnlocks("rivermoor");
+
+    openWindow("townProjects");
+    renderTownProjectsUI({
+      viewMode: config.viewMode,
+      focusProjectId: config.focusProjectId,
+      openedByNpcId: npcId
+    });
+  }
+
+  function talkBlacksmithTorren(){
+    openTownProjectsFromNpc("blacksmith_torren");
   }
 
   function handleQuestNpcTalk(npcId){
@@ -1393,6 +1852,11 @@ function consumeFoodFromInv(invIndex){
       return;
     }
     chatLine(`<span class="muted">They nod, but have nothing for you.</span>`);
+  }
+
+  function handleProjectNpcTalk(npcId) {
+    const id = String(npcId || "");
+    openTownProjectsFromNpc(id);
   }
 
   // ---------- HP / HUD ----------
@@ -1456,7 +1920,6 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
     if (hudGoldTextEl) hudGoldTextEl.textContent = `Gold: ${g}`;
     const invGoldPill = document.getElementById("invGoldPill");
     if (invGoldPill) invGoldPill.textContent = `Gold: ${g}`;
-    if (windowsOpen.blacksmith) renderBlacksmithUI();
   }
 
   function renderQuiver(){
@@ -1984,37 +2447,95 @@ if (hudCombatTextEl) hudCombatTextEl.textContent = `Combat: ${getPlayerCombatLev
 
 }
 
+  function buildBaseInteractables(){
+    // Returns the guaranteed base world interactables that should always be present.
+    // This is the source of truth for what should be seeded on new games.
+    const base = [];
+
+    // Bank at start castle
+    base.push({ type: "bank", x: startCastle.x0 + 4, y: startCastle.y0 + 3 });
+
+    // Quartermaster quest NPC
+    base.push({ type: "quest_npc", x: startCastle.x0 + 5, y: startCastle.y0 + 4, npcId: "quartermaster", name: "Quartermaster Bryn" });
+
+    // Vendor
+    base.push({ type: "vendor", x: VENDOR_TILE.x, y: VENDOR_TILE.y });
+
+    // Ladder down
+    base.push({ type: "ladder_down", x: OVERWORLD_LADDER_DOWN.x, y: OVERWORLD_LADDER_DOWN.y });
+
+    // Fishing spots on the river
+    base.push({ type: "fish", x: 6, y: RIVER_Y });
+    base.push({ type: "fish", x: 10, y: RIVER_Y + 1 });
+
+    // Smithing furnace and anvil
+    base.push({ type: "furnace", x: SMITHING_FURNACE_TILE.x, y: SMITHING_FURNACE_TILE.y });
+    base.push({ type: "anvil", x: SMITHING_ANVIL_TILE.x, y: SMITHING_ANVIL_TILE.y });
+
+    // Blacksmith Torren - Project NPC (always present)
+    base.push({ 
+      type: "project_npc", 
+      x: SMITHING_BLACKSMITH_TILE.x, 
+      y: SMITHING_BLACKSMITH_TILE.y, 
+      npcId: "blacksmith_torren", 
+      name: TOWN_PROJECT_NPC.blacksmith_torren.name 
+    });
+
+    // Project NPCs (always present)
+    base.push({ 
+      type: "project_npc", 
+      x: 30, 
+      y: 19, 
+      npcId: "dock_foreman", 
+      name: TOWN_PROJECT_NPC.dock_foreman.name 
+    });
+
+    base.push({ 
+      type: "project_npc", 
+      x: 7, 
+      y: 16, 
+      npcId: "hearth_keeper", 
+      name: TOWN_PROJECT_NPC.hearth_keeper.name 
+    });
+
+    base.push({ 
+      type: "project_npc", 
+      x: 8, 
+      y: 3, 
+      npcId: "mayor", 
+      name: TOWN_PROJECT_NPC.mayor.name 
+    });
+
+    return base;
+  }
+
   function seedInteractables(){
     interactables.length=0;
-    const bx = startCastle.x0 + 4;
-    const by = startCastle.y0 + 3;
-    placeInteractable("bank", bx, by);
-    placeInteractable("quest_npc", startCastle.x0 + 5, startCastle.y0 + 4, {
-      npcId: "quartermaster",
-      name: "Quartermaster Bryn"
-    });
-    placeInteractable("vendor", VENDOR_TILE.x, VENDOR_TILE.y);
-    placeInteractable("ladder_down", OVERWORLD_LADDER_DOWN.x, OVERWORLD_LADDER_DOWN.y);
-// Fishing spots on the river near the starter castle
-placeInteractable("fish", 6, RIVER_Y);
-placeInteractable("fish", 10, RIVER_Y + 1);
-// Smithing props in the south keep (bottom-right building).
-placeInteractable("furnace", SMITHING_FURNACE_TILE.x, SMITHING_FURNACE_TILE.y);
-placeInteractable("anvil", SMITHING_ANVIL_TILE.x, SMITHING_ANVIL_TILE.y);
-placeInteractable("quest_npc", SMITHING_BLACKSMITH_TILE.x, SMITHING_BLACKSMITH_TILE.y, {
-  npcId: "blacksmith_torren",
-  name: "Blacksmith Torren"
-});
-if (isSmithBankUnlocked()){
-  placeInteractable("bank", SMITHING_BANK_TILE.x, SMITHING_BANK_TILE.y, {
-    bankTag: "smithing_upgrade"
-  });
-}
+    
+    // Start with guaranteed base interactables
+    const base = buildBaseInteractables();
+    for (const it of base) {
+      interactables.push(it);
+    }
 
+    // Add conditional interactables that depend on state
+    
+    // Dock fishing spot (spawns after dock project completes)
+    const dockState = getProjectState("rivermoor", "dock");
+    if (dockState === "complete") {
+      interactables.push({ type: "fish_dock", x: 31, y: 23 });
+    }
 
+    const hearthState = getProjectState("rivermoor", "hearth");
+    if (hearthState === "complete") {
+      const cauldronTile = getHearthCampCauldronTile();
+      interactables.push({ type: "cauldron", x: cauldronTile.x, y: cauldronTile.y });
+    }
 
-
-
+    // Smithing bank (unlocks with smithing_upgrade project or storage project complete)
+    if (isSmithBankUnlocked() || getProjectState("rivermoor", "storage") === "complete"){
+      interactables.push({ type: "bank", x: SMITHING_BANK_TILE.x, y: SMITHING_BANK_TILE.y, bankTag: "smithing_upgrade" });
+    }
   }
 
   // ---------- Character / class ----------
@@ -2024,7 +2545,43 @@ if (isSmithBankUnlocked()){
   const ACTIVE_CHAR_ID_KEY = "classic_active_char_id_v1";
   const CHAT_UI_KEY = "classic_chat_ui_v1";
   const WINDOWS_UI_KEY = "classic_windows_ui_v2_multi_open";
-const BGM_KEY = "classic_bgm_v1";
+  const BGM_KEY = "classic_bgm_v1";
+
+  function parseMaybeJSON(raw){
+    if (typeof raw !== "string") return raw;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      // Keep legacy plain-string values readable when JSON parsing fails.
+      return raw;
+    }
+  }
+
+  function readStoredValue(key){
+    return localStorage.getItem(key);
+  }
+
+  function writeStoredValue(key, value){
+    localStorage.setItem(key, value);
+  }
+
+  function removeStoredValue(key){
+    localStorage.removeItem(key);
+  }
+
+  function readStoredJSON(key, fallback = null){
+    const parsed = parseMaybeJSON(readStoredValue(key));
+    return parsed == null ? fallback : parsed;
+  }
+
+  function writeStoredJSON(key, value){
+    try {
+      writeStoredValue(key, JSON.stringify(value));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   const hudChatEl = document.getElementById("hudChat");
   const hudChatTabEl = document.getElementById("hudChatTab");
@@ -2035,28 +2592,23 @@ const BGM_KEY = "classic_bgm_v1";
   const chatSendEl = document.getElementById("chatSend");
 
   function saveChatUI(){
-    try {
-      localStorage.setItem(CHAT_UI_KEY, JSON.stringify({
-        left: chatUI.left|0,
-        top: Number.isFinite(chatUI.top) ? (chatUI.top|0) : null,
-        width: chatUI.width|0,
-        height: chatUI.height|0,
-        collapsed: !!chatUI.collapsed
-      }));
-    } catch {}
+    writeStoredJSON(CHAT_UI_KEY, {
+      left: chatUI.left|0,
+      top: Number.isFinite(chatUI.top) ? (chatUI.top|0) : null,
+      width: chatUI.width|0,
+      height: chatUI.height|0,
+      collapsed: !!chatUI.collapsed
+    });
   }
 
   function loadChatUI(){
-    try {
-      const raw = localStorage.getItem(CHAT_UI_KEY);
-      if (!raw) return;
-      const d = JSON.parse(raw);
-      chatUI.left = Number.isFinite(d?.left) ? (d.left|0) : chatUI.left;
-      chatUI.top = Number.isFinite(d?.top) ? (d.top|0) : null;
-      chatUI.width = Number.isFinite(d?.width) ? (d.width|0) : chatUI.width;
-      chatUI.height = Number.isFinite(d?.height) ? (d.height|0) : chatUI.height;
-      chatUI.collapsed = !!d?.collapsed;
-    } catch {}
+    const d = readStoredJSON(CHAT_UI_KEY, null);
+    if (!d) return;
+    chatUI.left = Number.isFinite(d?.left) ? (d.left|0) : chatUI.left;
+    chatUI.top = Number.isFinite(d?.top) ? (d.top|0) : null;
+    chatUI.width = Number.isFinite(d?.width) ? (d.width|0) : chatUI.width;
+    chatUI.height = Number.isFinite(d?.height) ? (d.height|0) : chatUI.height;
+    chatUI.collapsed = !!d?.collapsed;
   }
 
   function applyChatUI(){
@@ -2080,25 +2632,19 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   function saveWindowsUI(){
-    try {
-      localStorage.setItem(WINDOWS_UI_KEY, JSON.stringify({
-        open: { ...windowsOpen },
-        layout: getWindowLayoutSnapshot()
-      }));
-    } catch {}
+    writeStoredJSON(WINDOWS_UI_KEY, {
+      open: { ...windowsOpen },
+      layout: getWindowLayoutSnapshot()
+    });
   }
 
   function loadWindowsUI(){
-    try {
-      const raw = localStorage.getItem(WINDOWS_UI_KEY);
-      if (!raw) return;
-      const d = JSON.parse(raw);
-      if (!d?.open) return;
-      for (const k of Object.keys(windowsOpen)){
-        windowsOpen[k] = !!d.open[k];
-      }
-      applyWindowLayout(d.layout);
-    } catch {}
+    const d = readStoredJSON(WINDOWS_UI_KEY, null);
+    if (!d?.open) return;
+    for (const k of Object.keys(windowsOpen)){
+      windowsOpen[k] = !!d.open[k];
+    }
+    applyWindowLayout(d.layout);
   }
 
   function renderMeleeTrainingUI(){
@@ -2333,6 +2879,7 @@ const BGM_KEY = "classic_bgm_v1";
   const winVendor    = document.getElementById("winVendor");
   const winSmithing  = document.getElementById("winSmithing");
   const winBlacksmith = document.getElementById("winBlacksmith");
+  const winTownProjects = document.getElementById("winTownProjects");
 
   const winSettings  = document.getElementById("winSettings");
 
@@ -2355,6 +2902,7 @@ const BGM_KEY = "classic_bgm_v1";
     ["vendor", winVendor],
     ["smithing", winSmithing],
     ["blacksmith", winBlacksmith],
+    ["townProjects", winTownProjects],
     ["settings", winSettings]
   ].filter(([, el]) => !!el);
 
@@ -2571,6 +3119,8 @@ const BGM_KEY = "classic_bgm_v1";
   const questsCompletedListEl = document.getElementById("questsCompletedList");
   const xpLampCountPillEl = document.getElementById("xpLampCountPill");
   const xpLampSkillListEl = document.getElementById("xpLampSkillList");
+  const projectsRenownPillEl = document.getElementById("projectsRenownPill");
+  const projectsGridEl = document.getElementById("projectsGrid");
 
   const eqWeaponSlot = document.getElementById("eqWeapon");
   const eqOffhandSlot = document.getElementById("eqOffhand");
@@ -2792,10 +3342,13 @@ const BGM_KEY = "classic_bgm_v1";
       }
 
       const rewards = Array.isArray(def.rewards) ? def.rewards : [];
-      if (rewards.length){
+      const renownReward = QUEST_RENOWN_REWARDS?.[questId]?.amount | 0;
+      const rewardParts = rewards.slice();
+      if (renownReward > 0) rewardParts.push(`Renown +${renownReward}`);
+      if (rewardParts.length){
         const rewardLine = document.createElement("div");
         rewardLine.className = "questSummary";
-        rewardLine.textContent = `Rewards: ${rewards.join(" | ")}`;
+        rewardLine.textContent = `Rewards: ${rewardParts.join(" | ")}`;
         card.appendChild(rewardLine);
       }
 
@@ -2900,6 +3453,478 @@ const BGM_KEY = "classic_bgm_v1";
     }
     openWindow("xpLamp");
     chatLine(`<span class="muted">You rub the XP Lamp. Choose a skill to empower.</span>`);
+  }
+
+  function applyProjectBenefit(projectId) {
+    const projectNames = {
+      dock: "Dock",
+      storage: "Blacksmith Storage",
+      hearth: "Riverside Cauldron",
+      flourishing: "Flourishing Town"
+    };
+    const name = projectNames[projectId] || projectId;
+    chatLine(`<span class="good">[PROJECT] ${name} complete!</span>`);
+    
+    // Grant renown for completing the project (donation-based completion)
+    // Flourishing auto-completes at 70 renown, so don't grant additional renown there
+    if (projectId !== "flourishing") {
+      grantTownRenown("rivermoor", 10);
+      chatLine(`<span class="good">+10 Renown for project completion!</span>`);
+    }
+    
+    if (projectId === "dock" || projectId === "hearth") {
+      getDecorAt = reinitializeDecorLookup();
+    }
+  }
+
+  // ========== DONATION HELPERS ==========
+  function pluralizeItemName(itemName, quantity) {
+    // If quantity is 1, return singular form
+    if (quantity === 1) return itemName;
+    
+    // Mass nouns and collective items that don't need pluralization
+    if (itemName.endsWith("Food")) return itemName;
+    
+    // Add 's' to most nouns for plural
+    // Special cases: items ending in 'y' typically become 'ies'
+    if (itemName.endsWith("y")) {
+      return itemName.slice(0, -1) + "ies";
+    }
+    return itemName + "s";
+  }
+
+  // State for town projects UI rendering
+  let currentTownProjectsUIState = { viewMode: "all", focusProjectId: null, openedByNpcId: null };
+  let lastTownProjectsRenderHash = null;
+
+  function renderTownProjectsUI(opts) {
+    if (!projectsGridEl) return;
+
+    // Default options - use stored state if not provided
+    opts = opts || currentTownProjectsUIState;
+    const viewMode = opts.viewMode || "all";
+    const focusProjectId = opts.focusProjectId || null;
+    const openedByNpcId = opts.openedByNpcId || null;
+
+    // Store the current state for game loop re-renders
+    currentTownProjectsUIState = { viewMode, focusProjectId, openedByNpcId };
+
+    const renown = getTownRenown("rivermoor");
+    const projectsRef = getProjectsRef();
+    const townProjects = projectsRef.rivermoor;
+    
+    // Create a hash of the current state to avoid unnecessary re-renders
+    // Include project states and fundedAt to ensure progress bar updates every frame during countdown
+    const currentHash = JSON.stringify({
+      viewMode,
+      focusProjectId,
+      openedByNpcId,
+      renown,
+      dockItems: townProjects.dock?.itemsDonated,
+      dockGold: townProjects.dock?.goldDonated,
+      dockState: townProjects.dock?.state,
+      dockFundedAt: townProjects.dock?.fundedAt,
+      storageItems: townProjects.storage?.itemsDonated,
+      storageGold: townProjects.storage?.goldDonated,
+      storageState: townProjects.storage?.state,
+      storageFundedAt: townProjects.storage?.fundedAt,
+      hearthItems: townProjects.hearth?.itemsDonated,
+      hearthGold: townProjects.hearth?.goldDonated,
+      hearthState: townProjects.hearth?.state,
+      hearthFundedAt: townProjects.hearth?.fundedAt,
+      flourishingItems: townProjects.flourishing?.itemsDonated,
+      flourishingGold: townProjects.flourishing?.goldDonated,
+      flourishingState: townProjects.flourishing?.state,
+      flourishingFundedAt: townProjects.flourishing?.fundedAt,
+      invLog: getInventoryCount('log'),
+      invIronBar: getInventoryCount('iron_bar'),
+      invCookedFood: getInventoryCount('cooked_food'),
+      invCrudeBar: getInventoryCount('crude_bar'),
+      playerGold: wallet.gold
+    });
+    
+    // Check if any project is funding (building) - if so, always re-render for smooth progress bar
+    const anyBuilding = Object.values(townProjects).some(p => p?.state === "funded");
+    
+    // If nothing changed and nothing is building, skip re-render
+    if (lastTownProjectsRenderHash === currentHash && !anyBuilding) {
+      return;
+    }
+    lastTownProjectsRenderHash = currentHash;
+
+    if (projectsRenownPillEl) {
+      projectsRenownPillEl.textContent = `Renown: ${renown}/70`;
+    }
+
+    projectsGridEl.innerHTML = "";
+
+    // Order: dock -> storage -> hearth -> flourishing
+    const projectOrder = ["dock", "storage", "hearth", "flourishing"];
+
+    // Filter projects based on view mode
+    let projectsToRender = projectOrder;
+    if (viewMode === "single" && focusProjectId) {
+      projectsToRender = projectOrder.filter(id => id === focusProjectId);
+    }
+
+    // If single view, also add a "View all projects" button at the top
+    if (viewMode === "single" && focusProjectId) {
+      const viewAllBtn = document.createElement("button");
+      viewAllBtn.textContent = "← View all projects";
+      viewAllBtn.style.marginBottom = "12px";
+      viewAllBtn.style.padding = "6px 12px";
+      viewAllBtn.style.backgroundColor = "#333";
+      viewAllBtn.style.color = "#aaa";
+      viewAllBtn.style.border = "1px solid #555";
+      viewAllBtn.style.borderRadius = "3px";
+      viewAllBtn.style.cursor = "pointer";
+      viewAllBtn.style.fontSize = "0.9em";
+
+      viewAllBtn.onclick = () => {
+        renderTownProjectsUI({ viewMode: "all" });
+      };
+
+      projectsGridEl.appendChild(viewAllBtn);
+    }
+
+    for (const projectId of projectsToRender) {
+      const def = PROJECT_DEFS[projectId];
+      const proj = townProjects[projectId];
+      if (!def || !proj) continue;
+
+      const row = document.createElement("div");
+      row.className = "projectRow";
+      row.style.marginBottom = "12px";
+      row.style.padding = "8px 12px";
+      row.style.border = "1px solid #555";
+      row.style.borderRadius = "4px";
+      row.style.backgroundColor = "#222";
+
+      // If this is the focused project in single view, add a highlight style
+      if (viewMode === "single" && focusProjectId === projectId) {
+        row.style.borderColor = "#4a9eff";
+        row.style.boxShadow = "0 0 8px rgba(74, 158, 255, 0.4)";
+      }
+
+      // Determine state display
+      let stateDisplay = proj.state.charAt(0).toUpperCase() + proj.state.slice(1);
+      let stateColor = "#999";
+      if (proj.state === "locked") {
+        stateColor = "#666";
+      } else if (proj.state === "unlocked" || proj.state === "available") {
+        stateColor = "#4a9eff";
+      } else if (proj.state === "funded" || proj.state === "constructing") {
+        stateColor = "#ffaa33";
+      } else if (proj.state === "complete") {
+        stateColor = "#4eff4a";
+      }
+
+      // Header: name + state
+      const header = document.createElement("div");
+      header.style.display = "flex";
+      header.style.justifyContent = "space-between";
+      header.style.alignItems = "center";
+      header.style.marginBottom = "6px";
+
+      const nameEl = document.createElement("div");
+      nameEl.style.fontWeight = "bold";
+      nameEl.style.color = "#ddd";
+      nameEl.textContent = def.name;
+
+      const stateEl = document.createElement("span");
+      stateEl.style.color = stateColor;
+      stateEl.style.fontSize = "0.85em";
+      stateEl.style.fontWeight = "bold";
+      stateEl.textContent = stateDisplay;
+
+      header.appendChild(nameEl);
+      header.appendChild(stateEl);
+      row.appendChild(header);
+
+      // Requirements: renown + gold
+      const reqLine = document.createElement("div");
+      reqLine.style.fontSize = "0.8em";
+      reqLine.style.color = "#999";
+      reqLine.style.marginBottom = "6px";
+
+      const canUnlock = renown >= def.renownRequired;
+      const renownStr = `Renown: ${renown}/${def.renownRequired}`;
+      const goldStr = def.goldCost > 0 ? ` · Gold: ${def.goldCost}` : "";
+
+      reqLine.innerHTML = `<span style="color: ${canUnlock ? "#4eff4a" : "#ff6666"}">${renownStr}</span>${goldStr}`;
+      row.appendChild(reqLine);
+
+      // Special text for flourishing milestone
+      if (projectId === "flourishing") {
+        const helperMsg = document.createElement("div");
+        helperMsg.style.fontSize = "0.75em";
+        helperMsg.style.color = "#aaa";
+        helperMsg.style.marginTop = "4px";
+        helperMsg.style.fontStyle = "italic";
+
+        if (proj.state === "locked") {
+          helperMsg.textContent = `Unlocks at ${def.renownRequired} renown.`;
+        } else if (proj.state === "complete") {
+          helperMsg.textContent = "Rivermoor is flourishing.";
+        }
+
+        if (helperMsg.textContent) {
+          row.appendChild(helperMsg);
+        }
+      }
+
+      // If constructing, show countdown
+      if (proj.state === "funded") {
+        const elapsed = now() - proj.fundedAt;
+        const remaining = Math.max(0, proj.buildTimeMs - elapsed);
+        const remainingSec = (remaining / 1000).toFixed(1);
+        const progressPct = Math.min(100, (elapsed / proj.buildTimeMs) * 100);
+
+        const progressBar = document.createElement("div");
+        progressBar.style.width = "100%";
+        progressBar.style.height = "8px";
+        progressBar.style.backgroundColor = "#333";
+        progressBar.style.borderRadius = "2px";
+        progressBar.style.overflow = "hidden";
+        progressBar.style.marginBottom = "6px";
+
+        const fill = document.createElement("div");
+        fill.style.width = progressPct + "%";
+        fill.style.height = "100%";
+        fill.style.backgroundColor = "#ffaa33";
+        fill.style.transition = "width 0.1s linear";
+        progressBar.appendChild(fill);
+        row.appendChild(progressBar);
+
+        const countdownEl = document.createElement("div");
+        countdownEl.style.fontSize = "0.8em";
+        countdownEl.style.color = "#ffaa33";
+        countdownEl.textContent = `Building: ${remainingSec}s remaining`;
+        row.appendChild(countdownEl);
+      }
+
+      // DONATION FLOW: Show when project is unlocked (not yet built or completed)
+      if (proj.state === "unlocked" || proj.state === "available") {
+        const req = PROJECT_REQUIREMENTS[projectId] || {};
+        
+        // Show item requirements
+        if (req.items && Object.keys(req.items).length > 0) {
+          const itemsHeader = document.createElement("div");
+          itemsHeader.style.fontSize = "0.85em";
+          itemsHeader.style.fontWeight = "bold";
+          itemsHeader.style.color = "#aaa";
+          itemsHeader.style.marginTop = "8px";
+          itemsHeader.style.marginBottom = "4px";
+          itemsHeader.textContent = "Items:";
+          row.appendChild(itemsHeader);
+
+          for (const [itemId, required] of Object.entries(req.items)) {
+            const donated = proj.itemsDonated[itemId] | 0;
+            const remaining = Math.max(0, required - donated);
+            const invCount = getInventoryCount(itemId);
+            const item = Items[itemId];
+            const itemName = item?.name ?? itemId;
+            const completed = remaining === 0;
+
+            // Item progress line
+            const itemProgressDiv = document.createElement("div");
+            itemProgressDiv.style.fontSize = "0.75em";
+            itemProgressDiv.style.color = completed ? "#4eff4a" : "#ccc";
+            itemProgressDiv.style.marginBottom = "4px";
+            itemProgressDiv.style.display = "flex";
+            itemProgressDiv.style.justifyContent = "space-between";
+            itemProgressDiv.style.alignItems = "center";
+
+            const itemTextSpan = document.createElement("span");
+            const displayName = pluralizeItemName(itemName, required);
+            itemTextSpan.textContent = `${displayName}: ${donated}/${required}`;
+
+            const itemButtonsDiv = document.createElement("div");
+            itemButtonsDiv.style.display = "flex";
+            itemButtonsDiv.style.gap = "4px";
+
+            // Quick-donate buttons: 1, 5, Max
+            const buttonOptions = [
+              { label: "1", qty: 1 },
+              { label: "5", qty: 5 },
+              { label: "Max", qty: () => Math.min(invCount, remaining) }
+            ];
+
+            for (const opt of buttonOptions) {
+              const btn = document.createElement("button");
+              btn.style.padding = "2px 4px";
+              btn.style.fontSize = "0.7em";
+              btn.style.backgroundColor = "#333";
+              btn.style.color = "#aaa";
+              btn.style.border = "1px solid #555";
+              btn.style.borderRadius = "2px";
+              btn.style.cursor = "pointer";
+
+              const qtyValue = typeof opt.qty === "function" ? opt.qty() : opt.qty;
+              const canDonate = remaining > 0 && invCount > 0;
+
+              if (canDonate) {
+                btn.style.backgroundColor = "#2a4a2a";
+                btn.style.color = "#6aff6a";
+                btn.style.cursor = "pointer";
+              } else {
+                btn.style.opacity = "0.5";
+                btn.style.cursor = "not-allowed";
+              }
+
+              btn.textContent = opt.label;
+
+              if (canDonate) {
+                btn.onclick = () => {
+                  try {
+                    const qtyToDonate = typeof opt.qty === "function" ? opt.qty() : opt.qty;
+                    const result = handleProjectItemDonation(projectId, itemId, qtyToDonate);
+                    
+                    if (result.success) {
+                      renderTownProjectsUI();
+                      chatLine(`<span class="good">Donated ${result.donated}x ${itemName}.</span>`);
+                    } else {
+                      chatLine(`<span class="warn">${result.reason}</span>`);
+                    }
+                  } catch (err) {
+                    console.error(`[ERROR] Donation failed:`, err);
+                    chatLine(`<span class="error">Error during donation: ${err.message}</span>`);
+                  }
+                };
+              }
+
+              itemButtonsDiv.appendChild(btn);
+            }
+
+            itemProgressDiv.appendChild(itemTextSpan);
+            itemProgressDiv.appendChild(itemButtonsDiv);
+            row.appendChild(itemProgressDiv);
+          }
+        }
+
+        // Show gold requirement
+        if (req.gold && req.gold > 0) {
+          const goldHeader = document.createElement("div");
+          goldHeader.style.fontSize = "0.85em";
+          goldHeader.style.fontWeight = "bold";
+          goldHeader.style.color = "#aaa";
+          goldHeader.style.marginTop = "8px";
+          goldHeader.style.marginBottom = "4px";
+          goldHeader.textContent = "Gold:";
+          row.appendChild(goldHeader);
+
+          const goldDonated = proj.goldDonated | 0;
+          const goldRemaining = Math.max(0, (req.gold | 0) - goldDonated);
+          const completed = goldRemaining === 0;
+
+          const goldProgressDiv = document.createElement("div");
+          goldProgressDiv.style.fontSize = "0.75em";
+          goldProgressDiv.style.color = completed ? "#4eff4a" : "#ccc";
+          goldProgressDiv.style.marginBottom = "4px";
+          goldProgressDiv.style.display = "flex";
+          goldProgressDiv.style.justifyContent = "space-between";
+          goldProgressDiv.style.alignItems = "center";
+
+          const goldTextSpan = document.createElement("span");
+          goldTextSpan.textContent = `Gold: ${goldDonated}/${req.gold}`;
+
+          const goldButtonsDiv = document.createElement("div");
+          goldButtonsDiv.style.display = "flex";
+          goldButtonsDiv.style.gap = "4px";
+
+          const goldOptions = [
+            { label: "100", qty: 100 },
+            { label: "500", qty: 500 },
+            { label: "Max", qty: () => Math.min(wallet.gold, goldRemaining) }
+          ];
+
+          for (const opt of goldOptions) {
+            const btn = document.createElement("button");
+            btn.style.padding = "2px 4px";
+            btn.style.fontSize = "0.7em";
+            btn.style.backgroundColor = "#333";
+            btn.style.color = "#aaa";
+            btn.style.border = "1px solid #555";
+            btn.style.borderRadius = "2px";
+            btn.style.cursor = "pointer";
+
+            const qtyValue = typeof opt.qty === "function" ? opt.qty() : opt.qty;
+            const canDonate = goldRemaining > 0 && wallet.gold > 0;
+
+            if (canDonate) {
+              btn.style.backgroundColor = "#2a4a2a";
+              btn.style.color = "#6aff6a";
+              btn.style.cursor = "pointer";
+            } else {
+              btn.style.opacity = "0.5";
+              btn.style.cursor = "not-allowed";
+            }
+
+            btn.textContent = opt.label;
+
+            if (canDonate) {
+              btn.onclick = () => {
+                const qty = typeof opt.qty === "function" ? opt.qty() : opt.qty;
+                const result = handleProjectGoldDonation(projectId, qty);
+                if (result.success) {
+                  renderTownProjectsUI();
+                  chatLine(`<span class="good">Donated ${result.donated} gold.</span>`);
+                } else {
+                  chatLine(`<span class="warn">${result.reason}</span>`);
+                }
+              };
+            }
+
+            goldButtonsDiv.appendChild(btn);
+          }
+
+          goldProgressDiv.appendChild(goldTextSpan);
+          goldProgressDiv.appendChild(goldButtonsDiv);
+          row.appendChild(goldProgressDiv);
+        }
+      }
+
+      // Fund button (OLD SYSTEM - for backwards compatibility, only show for projects without donations)
+      if (proj.state === "unlocked" && !PROJECT_REQUIREMENTS[projectId]) {
+        if (def.autoComplete) {
+          const achieveMsg = document.createElement("div");
+          achieveMsg.style.marginTop = "8px";
+          achieveMsg.style.fontSize = "0.8em";
+          achieveMsg.style.color = "#4eff4a";
+          achieveMsg.style.fontStyle = "italic";
+          achieveMsg.textContent = `Achieved at ${def.renownRequired} renown`;
+          row.appendChild(achieveMsg);
+        } else {
+          const needsGold = def.goldCost > 0 ? wallet.gold < def.goldCost : false;
+          const btn = document.createElement("button");
+          btn.textContent = `Fund (${def.goldCost} gold)`;
+          btn.style.marginTop = "8px";
+          btn.style.width = "100%";
+          btn.style.padding = "6px";
+          btn.style.backgroundColor = needsGold ? "#444" : "#2a6a2a";
+          btn.style.color = needsGold ? "#999" : "#6aff6a";
+          btn.style.border = "1px solid " + (needsGold ? "#555" : "#4a9a4a");
+          btn.style.borderRadius = "3px";
+          btn.style.cursor = needsGold ? "not-allowed" : "pointer";
+
+          if (!needsGold) {
+            btn.onmousedown = (event) => {
+              if (event.button !== 0) return;
+              const result = fundTownProject("rivermoor", projectId);
+              if (result.success) {
+                renderTownProjectsUI();
+              } else {
+                chatLine(`<span class="warn">[Fund failed] ${result.reason}</span>`);
+              }
+            };
+          }
+
+          row.appendChild(btn);
+        }
+      }
+
+      projectsGridEl.appendChild(row);
+    }
   }
 
   function renderQuiverSlot(){
@@ -3039,6 +4064,40 @@ const BGM_KEY = "classic_bgm_v1";
         ? "All bank slots unlocked"
         : `Next expansion: ${cost} gold`;
     }
+  }
+
+  function renderInventoryAndEquipment(){
+    renderInv();
+    renderEquipment();
+  }
+
+  function renderInventoryAndQuiver(){
+    renderInv();
+    renderQuiver();
+  }
+
+  function renderInventoryAndBank(){
+    renderInv();
+    renderBank();
+  }
+
+  function renderPanelsAfterLoad(){
+    renderSkills();
+    renderQuests();
+    renderInventoryAndBank();
+    renderEquipment();
+    renderQuiver();
+    renderHPHUD();
+  }
+
+  function renderPanelsOnBootstrap(){
+    renderEquipment();
+    renderInv();
+    renderSkills();
+    renderQuests();
+    renderBank();
+    renderQuiver();
+    renderHPHUD();
   }
 
   function forgeSmithingRecipe(barId, rec){
@@ -3184,41 +4243,67 @@ const BGM_KEY = "classic_bgm_v1";
     if (blacksmithGoldPillEl) blacksmithGoldPillEl.textContent = `Gold: ${getGold()}`;
     blacksmithListEl.innerHTML = "";
 
-    const installed = isSmithBankUnlocked();
+    // Check if storage project is complete OR legacy upgrade was unlocked (migration)
+    const storageState = getProjectState("rivermoor", "storage");
+    const isStorageComplete = (storageState === "complete") || isSmithBankUnlocked();
 
     const line = document.createElement("div");
     line.className = "shopRow";
-    line.innerHTML = `
-      <div class="shopLeft">
-        <div class="shopIcon">${BLACKSMITH_BANK_CHEST_ICON}</div>
-        <div class="shopMeta">
-          <div class="shopName">Forge Bank Chest</div>
-          <div class="shopSub">${installed ? "Installed in the smithing hall." : `Install a permanent bank chest near the forge for ${SMITH_BANK_UNLOCK_COST} gold.`}</div>
-        </div>
-      </div>
-      <div class="shopActions"></div>
-    `;
 
-    const actions = line.querySelector(".shopActions");
-    const btn = document.createElement("button");
-    btn.id = "blacksmithUpgradeSmithBankBtn";
-    btn.className = "shopBtn";
-    btn.textContent = installed ? "Installed" : `Install (${SMITH_BANK_UNLOCK_COST}g)`;
-    btn.disabled = installed;
-    btn.onclick = () => {
-      if (!availability.blacksmith){
-        chatLine(`<span class="muted">You need to be next to Blacksmith Torren.</span>`);
+    if (isStorageComplete) {
+      // Chest is installed - show "Installed" status
+      line.innerHTML = `
+        <div class="shopLeft">
+          <div class="shopIcon">${BLACKSMITH_BANK_CHEST_ICON}</div>
+          <div class="shopMeta">
+            <div class="shopName">Forge Bank Chest</div>
+            <div class="shopSub">Installed in the smithing hall.</div>
+          </div>
+        </div>
+        <div class="shopActions"></div>
+      `;
+      const actions = line.querySelector(".shopActions");
+      const btn = document.createElement("button");
+      btn.className = "shopBtn";
+      btn.textContent = "Installed";
+      btn.disabled = true;
+      actions.appendChild(btn);
+    } else {
+      // Chest not installed - show town projects info
+      const storageProject = PROJECT_DEFS.storage;
+      const renownText = storageProject ? `${storageProject.renownRequired} Renown` : "Unknown";
+      const goldText = storageProject ? `${storageProject.goldCost}g` : "Unknown";
+
+      line.innerHTML = `
+        <div class="shopLeft">
+          <div class="shopIcon">${BLACKSMITH_BANK_CHEST_ICON}</div>
+          <div class="shopMeta">
+            <div class="shopName">Forge Bank Chest</div>
+            <div class="shopSub">Unlocked via Town Projects (${renownText}, ${goldText})</div>
+          </div>
+        </div>
+        <div class="shopActions"></div>
+      `;
+      const actions = line.querySelector(".shopActions");
+      const btn = document.createElement("button");
+      btn.className = "shopBtn";
+      btn.textContent = "Open Town Projects";
+      btn.onclick = () => {
+        if (!availability.blacksmith){
+          chatLine(`<span class="muted">You need to be next to Blacksmith Torren.</span>`);
+          closeWindow("blacksmith");
+          return;
+        }
+        // Open Town Projects first, then close Blacksmith to ensure it stays visible
+        openWindow("townProjects");
         closeWindow("blacksmith");
-        return;
-      }
-      if (buySmithingBankUpgrade()){
-        renderBlacksmithUI();
-      }
-    };
-    actions.appendChild(btn);
+      };
+      actions.appendChild(btn);
+    }
+
     blacksmithListEl.appendChild(line);
 
-    if (!installed){
+    if (!isStorageComplete){
       const note = document.createElement("div");
       note.className = "hint";
       note.textContent = "More upgrades will be added in future patches.";
@@ -3240,6 +4325,16 @@ const BGM_KEY = "classic_bgm_v1";
     const p = vendorBuyPrice(id) ?? (DEFAULT_VENDOR_SELL_ONLY_PRICES[id] ?? null);
     if (p == null) return null;
     return Math.max(1, Math.floor(p * VENDOR_SELL_MULT));
+  }
+
+  function renderVendorAndInventoryViews(){
+    renderVendorUI();
+    renderInventoryAndQuiver();
+  }
+
+  function setVendorTab(tab){
+    availability.vendorTab = tab;
+    renderVendorUI();
   }
 
   function renderVendorUI(){
@@ -3295,9 +4390,7 @@ const BGM_KEY = "classic_bgm_v1";
             }
 
             chatLine(`<span class="good">Bought ${qty}x ${it.name}.</span>`);
-            renderVendorUI();
-            renderInv();
-            renderQuiver();
+            renderVendorAndInventoryViews();
           };
           actions.appendChild(btn);
         }
@@ -3348,9 +4441,7 @@ const BGM_KEY = "classic_bgm_v1";
         }
         addGold(price);
         chatLine(`<span class="good">Sold 1x ${it.name}.</span>`);
-        renderVendorUI();
-        renderInv();
-        renderQuiver();
+        renderVendorAndInventoryViews();
       };
       actions.appendChild(btn1);
 
@@ -3368,9 +4459,7 @@ const BGM_KEY = "classic_bgm_v1";
             addGold(price * sold);
             chatLine(`<span class="good">Sold ${sold}x ${it.name}.</span>`);
           }
-          renderVendorUI();
-          renderInv();
-          renderQuiver();
+          renderVendorAndInventoryViews();
         };
         actions.appendChild(btnAll);
       }
@@ -3383,8 +4472,8 @@ const BGM_KEY = "classic_bgm_v1";
     }
   }
 
-  if (vendorTabBuyBtn) vendorTabBuyBtn.addEventListener("click", ()=>{ availability.vendorTab = "buy"; renderVendorUI(); });
-  if (vendorTabSellBtn) vendorTabSellBtn.addEventListener("click", ()=>{ availability.vendorTab = "sell"; renderVendorUI(); });
+  if (vendorTabBuyBtn) vendorTabBuyBtn.addEventListener("click", ()=>{ setVendorTab("buy"); });
+  if (vendorTabSellBtn) vendorTabSellBtn.addEventListener("click", ()=>{ setVendorTab("sell"); });
 
   // Open state: inventory + equipment can be open simultaneously.
 
@@ -3398,6 +4487,7 @@ const BGM_KEY = "classic_bgm_v1";
     winVendor.classList.toggle("hidden", !windowsOpen.vendor);
     if (winSmithing) winSmithing.classList.toggle("hidden", !windowsOpen.smithing);
     if (winBlacksmith) winBlacksmith.classList.toggle("hidden", !windowsOpen.blacksmith);
+    if (winTownProjects) winTownProjects.classList.toggle("hidden", !windowsOpen.townProjects);
 
     winSettings.classList.toggle("hidden", !windowsOpen.settings);
 
@@ -3412,8 +4502,8 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   function closeExclusive(exceptName){
-    // Skills / Quests / XP Lamp / Bank / Vendor / Smithing / Blacksmith / Settings are exclusive between themselves.
-    for (const k of ["skills","quests","xpLamp","bank","vendor","smithing","blacksmith","settings"]){
+    // Skills / Quests / XP Lamp / Bank / Vendor / Smithing / Blacksmith / Town Projects / Settings are exclusive between themselves.
+    for (const k of ["skills","quests","xpLamp","bank","vendor","smithing","blacksmith","townProjects","settings"]){
       if (k !== exceptName) windowsOpen[k] = false;
     }
   }
@@ -3436,6 +4526,7 @@ const BGM_KEY = "classic_bgm_v1";
     if (name === "smithing") renderSmithingUI();
     if (name === "blacksmith") renderBlacksmithUI();
     if (name === "xpLamp") renderXpLampUI();
+    if (name === "townProjects") renderTownProjectsUI();
     saveWindowsUI();
   }
 
@@ -3500,41 +4591,46 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   // ---------- Bank interactions ----------
+  function requireBankAccess(message){
+    if (availability.bank) return true;
+    chatLine(`<span class="warn">${message}</span>`);
+    return false;
+  }
+
+  function showBankFullWarning(){
+    chatLine(`<span class="warn">Bank is full.</span>`);
+  }
+
   function depositFromInv(invIndex, qty=null, exactSlotOnly=false){
     const s=inv[invIndex]; if (!s) return;
     const id = s.id;
     const item = Items[id];
     if (!item) return;
 
-    if (!availability.bank){
-      chatLine(`<span class="warn">You must be at a bank chest to bank items.</span>`);
-      return;
-    }
+    if (!requireBankAccess("You must be at a bank chest to bank items.")) return;
 
     if (item.stack){
       const have = Math.max(1, s.qty|0);
       const want = qty==null ? 1 : Math.min(Math.max(1, qty|0), have);
       const ok = addToBank(bank, id, want);
       if (!ok){
-        chatLine(`<span class="warn">Bank is full.</span>`);
+        showBankFullWarning();
         return;
       }
       const left = have - want;
       inv[invIndex] = left > 0 ? { id, qty: left } : null;
-      renderInv();
-      renderBank();
+      renderInventoryAndBank();
       return;
     }
 
     if (exactSlotOnly){
       const ok = addToBank(bank, id, 1);
       if (!ok){
-        chatLine(`<span class="warn">Bank is full.</span>`);
+        showBankFullWarning();
         return;
       }
       inv[invIndex] = null;
-      renderInv();
-      renderBank();
+      renderInventoryAndBank();
       return;
     }
 
@@ -3551,11 +4647,11 @@ const BGM_KEY = "classic_bgm_v1";
       }
       if (idx<0) break;
       const ok = addToBank(bank, id, 1);
-      if (!ok){ chatLine(`<span class="warn">Bank is full.</span>`); break; }
+      if (!ok){ showBankFullWarning(); break; }
       inv[idx]=null;
       moved++;
     }
-    if (moved>0){ renderInv(); renderBank(); }
+    if (moved>0){ renderInventoryAndBank(); }
   }
 
   function countInvQtyById(id){
@@ -3576,10 +4672,7 @@ const BGM_KEY = "classic_bgm_v1";
     const item = Items[id];
     if (!item) return;
 
-    if (!availability.bank){
-      chatLine(`<span class="warn">You must be at a bank chest to bank items.</span>`);
-      return;
-    }
+    if (!requireBankAccess("You must be at a bank chest to bank items.")) return;
 
     const have = countInvQtyById(id);
     if (have <= 0) return;
@@ -3595,7 +4688,7 @@ const BGM_KEY = "classic_bgm_v1";
         const take = Math.min(remaining, stackQty);
         const ok = addToBank(bank, id, take);
         if (!ok){
-          chatLine(`<span class="warn">Bank is full.</span>`);
+          showBankFullWarning();
           break;
         }
 
@@ -3612,7 +4705,7 @@ const BGM_KEY = "classic_bgm_v1";
         const ok = addToBank(bank, id, 1);
         if (!ok){
           remaining = 0;
-          chatLine(`<span class="warn">Bank is full.</span>`);
+          showBankFullWarning();
           return;
         }
         inv[idx] = null;
@@ -3629,16 +4722,12 @@ const BGM_KEY = "classic_bgm_v1";
     }
 
     if (moved>0){
-      renderInv();
-      renderBank();
+      renderInventoryAndBank();
     }
   }
 
   function withdrawFromBank(bankIndex, qty=null){
-    if (!availability.bank){
-      chatLine(`<span class="warn">You must be at a bank chest to withdraw.</span>`);
-      return;
-    }
+    if (!requireBankAccess("You must be at a bank chest to withdraw.")) return;
 
     const s=bank[bankIndex]; if (!s) return;
     const item=Items[s.id];
@@ -3665,10 +4754,7 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   function buyBankExpansion(){
-    if (!availability.bank){
-      chatLine(`<span class="warn">You must be at a bank chest.</span>`);
-      return;
-    }
+    if (!requireBankAccess("You must be at a bank chest.")) return;
 
     const current = getBankCapacity();
     if (current >= MAX_BANK){
@@ -3689,7 +4775,7 @@ const BGM_KEY = "classic_bgm_v1";
   }
 
   document.getElementById("bankDepositAll").addEventListener("click", () => {
-    if (!availability.bank) return chatLine(`<span class="warn">You must be at a bank chest.</span>`);
+    if (!requireBankAccess("You must be at a bank chest.")) return;
     for (let i=0;i<MAX_INV;i++){
       const s=inv[i]; if (!s) continue;
       const item = Items[s.id];
@@ -3699,11 +4785,11 @@ const BGM_KEY = "classic_bgm_v1";
       if (!ok) break;
       inv[i]=null;
     }
-    renderInv(); renderBank();
+    renderInventoryAndBank();
   });
 
   document.getElementById("bankWithdrawAll").addEventListener("click", () => {
-    if (!availability.bank) return chatLine(`<span class="warn">You must be at a bank chest.</span>`);
+    if (!requireBankAccess("You must be at a bank chest.")) return;
     for (let i=0;i<getBankCapacity();i++){
       const s=bank[i]; if (!s) continue;
       const item=Items[s.id];
@@ -3721,7 +4807,7 @@ const BGM_KEY = "classic_bgm_v1";
       s.qty = have - added;
       if (s.qty<=0) bank[i]=null;
     }
-    renderInv(); renderBank();
+    renderInventoryAndBank();
   });
 
   if (bankExpandBtn){
@@ -3857,7 +4943,6 @@ const BGM_KEY = "classic_bgm_v1";
   const startCharStatus = document.getElementById("startCharStatus");
   const startCharMeta = document.getElementById("startCharMeta");
   const startContinueBtn = document.getElementById("startContinueBtn");
-  const startNewGameBtn = document.getElementById("startNewGameBtn");
   const startNewCharacterBtn = document.getElementById("startNewCharacterBtn");
   const loadCharOverlay = document.getElementById("loadCharOverlay");
   const loadCharList = document.getElementById("loadCharList");
@@ -3868,6 +4953,8 @@ const BGM_KEY = "classic_bgm_v1";
   const deleteCharOverlay = document.getElementById("deleteCharOverlay");
   const deleteCharCancel = document.getElementById("deleteCharCancel");
   const deleteCharConfirm = document.getElementById("deleteCharConfirm");
+  const townboardingOverlay = document.getElementById("townboardingOverlay");
+  const townboardingBtn = document.getElementById("townboardingBtn");
 
   const {
     loadCharacterList,
@@ -3914,7 +5001,6 @@ const BGM_KEY = "classic_bgm_v1";
     startSaveStatus,
     startSaveMeta,
     startContinueBtn,
-    startNewGameBtn,
     getStoredCharacterProfile,
     getStoredSaveProfile,
     getActiveCharacterId,
@@ -3936,7 +5022,6 @@ const BGM_KEY = "classic_bgm_v1";
     charColorPill,
     charStart,
     classPick,
-    startNewGameBtn,
     startNewCharacterBtn,
     loadCharOverlay,
     loadCharList,
@@ -3962,6 +5047,7 @@ const BGM_KEY = "classic_bgm_v1";
     openStartOverlay,
     startNewGame,
     resetCharacter,
+    showTownboardingModal: checkAndShowTownboardingModal,
     chatLine
   });
 
@@ -4072,6 +5158,7 @@ const BGM_KEY = "classic_bgm_v1";
     setBankCapacity,
     resetWorldUpgrades,
     resetQuestProgress,
+    resetRenownGrants,
     closeCtxMenu,
     setUseState,
     applyWindowVis,
@@ -4253,6 +5340,7 @@ const BGM_KEY = "classic_bgm_v1";
     onUseLadder: useLadder,
     onQuestEvent: trackQuestEvent,
     onTalkQuestNpc: handleQuestNpcTalk,
+    onTalkProjectNpc: handleProjectNpcTalk,
     onUseSealedGate: handleUseSealedGate,
     onUseDungeonBrazier: handleUseDungeonBrazier,
     onMobDefeated: handleMobDefeated
@@ -4280,6 +5368,11 @@ const BGM_KEY = "classic_bgm_v1";
       return inRangeOfTile(b.x,b.y,1.1);
     }
     if (t.kind==="quest_npc"){
+      const n=interactables[t.index];
+      if (!n) return false;
+      return inRangeOfTile(n.x,n.y,1.1);
+    }
+    if (t.kind==="project_npc"){
       const n=interactables[t.index];
       if (!n) return false;
       return inRangeOfTile(n.x,n.y,1.1);
@@ -5384,6 +6477,563 @@ if (item.ammo){
     ctx.restore();
   }
 
+  function drawMaraHearthkeeper(x, y){
+    const t = now();
+    const cx = x * TILE + TILE / 2;
+    const cy = y * TILE + TILE / 2 + Math.sin(t * 0.005 + x * 0.6 + y * 0.9) * 0.28;
+    const sway = Math.sin(t * 0.004 + x * 1.2 + y * 0.5) * 0.65;
+    ctx.save();
+
+    // Ground shadow.
+    ctx.fillStyle = "rgba(0,0,0,.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 13, 10.2, 5.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Boots and trousers (dark).
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(cx - 8, cy + 10, 6, 3);
+    ctx.fillRect(cx + 2, cy + 10, 6, 3);
+    ctx.fillStyle = "#1f2937";
+    ctx.fillRect(cx - 7, cy + 4, 5, 6);
+    ctx.fillRect(cx + 2, cy + 4, 5, 6);
+
+    // Torso (desaturated red dress, narrower waist for feminine silhouette).
+    ctx.fillStyle = "rgba(110,25,15,.90)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 4, 5.6, 8.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Darker side shading on torso for body definition.
+    ctx.fillStyle = "rgba(75,15,8,.55)";
+    ctx.fillRect(cx - 6.4, cy + 1, 1.8, 6.5);
+    ctx.fillRect(cx + 4.6, cy + 1, 1.8, 6.5);
+    // Subtle skirt flare at very bottom for hourglass silhouette.
+    ctx.fillStyle = "rgba(110,25,15,.90)";
+    ctx.fillRect(cx - 6.9, cy + 10.2, 13.8, 1.2);
+    // Apron (cream/white cook's apron - tapered, asymmetrical).
+    ctx.fillStyle = "rgba(245,235,220,.88)";
+    // Narrower at top (waist), wider at bottom (flare)
+    ctx.fillRect(cx - 4.2, cy + 1.5, 8.4, 5.0);
+    ctx.fillRect(cx - 5.0, cy + 6.5, 10.0, 5.0);
+    // Apron outline - trapezoid shape shows flare.
+    ctx.strokeStyle = "rgba(180,150,120,.65)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 4.2, cy + 1.5);
+    ctx.lineTo(cx + 4.2, cy + 1.5);
+    ctx.lineTo(cx + 5.0, cy + 6.5);
+    ctx.lineTo(cx + 5.0, cy + 11.5);
+    ctx.lineTo(cx - 5.0, cy + 11.5);
+    ctx.lineTo(cx - 5.0, cy + 6.5);
+    ctx.closePath();
+    ctx.stroke();
+    // Subtle right-side shadow (asymmetrical, not centered).
+    ctx.strokeStyle = "rgba(200,170,140,.35)";
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(cx + 4.2, cy + 2.0);
+    ctx.lineTo(cx + 4.8, cy + 11);
+    ctx.stroke();
+
+    // Head.
+    const headY = cy - 6;
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Chef's hat - puffed white top.
+    ctx.fillStyle = "rgba(250,248,245,.94)";
+    ctx.beginPath();
+    ctx.ellipse(cx, headY - 8.5, 5.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Hat band/base (dark).
+    ctx.fillStyle = "rgba(60,50,40,.80)";
+    ctx.fillRect(cx - 5.8, headY - 5.2, 11.6, 1.2);
+    // Hat outline for definition.
+    ctx.strokeStyle = "rgba(200,190,180,.6)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.ellipse(cx, headY - 8.5, 5.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Eyes.
+    ctx.fillStyle = "rgba(0,0,0,.62)";
+    ctx.beginPath();
+    ctx.arc(cx - 2.0 + sway * 0.15, headY - 1.2, 1, 0, Math.PI * 2);
+    ctx.arc(cx + 2.0 + sway * 0.15, headY - 1.2, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Left arm (holding ladle) - slope inward from shoulder.
+    const shoulderLX = cx - 4.4;
+    const shoulderLY = cy + 2.5;
+    
+    // Left shoulder puff - smaller width for slope effect.
+    ctx.fillStyle = "rgba(110,25,15,.90)";
+    ctx.beginPath();
+    ctx.arc(shoulderLX - 0.8, shoulderLY, 1.0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    const elbowLX = cx - 6.8 + sway * 0.08;
+    const elbowLY = cy + 4.2;
+    const handLX = cx - 8.2;
+    const handLY = cy + 3.5;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 3.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    // Hand.
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handLX, handLY, 1.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ladle (spoon shape with better silhouette).
+    ctx.save();
+    ctx.translate(handLX, handLY);
+    // Ladle bowl (silver).
+    ctx.fillStyle = "#a0a0a0";
+    ctx.beginPath();
+    ctx.arc(1.5, -1.2, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Dark bowl outline for contrast.
+    ctx.strokeStyle = "rgba(0,0,0,.6)";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.arc(1.5, -1.2, 2.2, 0, Math.PI * 2);
+    ctx.stroke();
+    // Ladle handle (golden).
+    ctx.fillStyle = "#d4af37";
+    ctx.fillRect(-0.5, -0.2, 1.2, 1.6);
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 0.9;
+    ctx.strokeRect(-0.5, -0.2, 1.2, 1.6);
+    ctx.restore();
+
+    // Right arm (resting) - wider shoulders.
+    const shoulderRX = cx + 4.1;
+    const shoulderRY = cy + 2.9;
+    
+    // Right shoulder puff - smaller width for slope effect, arm tilts down 1px.
+    ctx.fillStyle = "rgba(110,25,15,.90)";
+    ctx.beginPath();
+    ctx.arc(shoulderRX + 0.8, shoulderRY, 1.0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    const elbowRX = cx + 6.7 + sway * 0.05;
+    const elbowRY = cy + 5.0;
+    const handRX = cx + 5.7;
+    const handRY = cy + 7.2;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 1.9;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handRX, handRY, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hearth glow ember.
+    const emberPulse = 0.55 + 0.45 * Math.sin(t * 0.014 + x * 0.7 + y * 0.2);
+    ctx.fillStyle = `rgba(239,68,68,${0.34 + 0.28 * emberPulse})`;
+    ctx.beginPath();
+    ctx.arc(cx + 1.6, cy + 8.6, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawGarrickForeman(x, y){
+    const t = now();
+    const cx = x * TILE + TILE / 2;
+    const cy = y * TILE + TILE / 2 + Math.sin(t * 0.005 + x * 0.6 + y * 0.9) * 0.28;
+    const sway = Math.sin(t * 0.004 + x * 1.2 + y * 0.5) * 0.65;
+    ctx.save();
+
+    // Ground shadow.
+    ctx.fillStyle = "rgba(0,0,0,.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 13, 10.2, 5.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Boots and trousers (weathered).
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(cx - 8, cy + 10, 6, 3);
+    ctx.fillRect(cx + 2, cy + 10, 6, 3);
+    ctx.fillStyle = "#164e63";
+    ctx.fillRect(cx - 7, cy + 4, 5, 6);
+    ctx.fillRect(cx + 2, cy + 4, 5, 6);
+
+    // Torso (blue/teal accent).
+    ctx.fillStyle = "rgba(30,58,58,.96)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 4.8, 7.8, 8.9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Tool belt (leather strap with tools).
+    ctx.fillStyle = "rgba(70,35,8,.92)";
+    ctx.fillRect(cx - 6, cy + 7, 12, 2.2);
+    // Darker belt stripe for definition.
+    ctx.strokeStyle = "rgba(40,20,5,.85)";
+    ctx.lineWidth = 2.0;
+    ctx.strokeRect(cx - 6, cy + 7, 12, 2.2);
+    // Belt buckle highlight (tan/gold center).
+    ctx.fillStyle = "rgba(220,190,150,.75)";
+    ctx.fillRect(cx - 1.0, cy + 6.8, 2.0, 2.5);
+
+    // Tool details on belt (small rectangles for tools).
+    ctx.fillStyle = "#888888";
+    ctx.fillRect(cx - 4, cy + 6.8, 1.5, 2.8);
+    ctx.fillRect(cx - 1, cy + 6.8, 1.5, 2.8);
+    ctx.fillRect(cx + 2, cy + 6.8, 1.5, 2.8);
+    // Tool shadows.
+    ctx.strokeStyle = "rgba(0,0,0,.5)";
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(cx - 4, cy + 6.8, 1.5, 2.8);
+    ctx.strokeRect(cx - 1, cy + 6.8, 1.5, 2.8);
+    ctx.strokeRect(cx + 2, cy + 6.8, 1.5, 2.8);
+
+    // Rope coil at right hip (fisherman detail - asymmetrical).
+    ctx.fillStyle = "rgba(210,180,140,.75)";
+    // Rope coil - subtle circular cluster (offset for asymmetry).
+    ctx.beginPath();
+    ctx.arc(cx + 6.2, cy + 7.5, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(cx + 5.0, cy + 6.8, 2.2, 2.0);
+    // Rope outline for definition.
+    ctx.strokeStyle = "rgba(100,80,50,.7)";
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.arc(cx + 6.2, cy + 7.5, 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(cx + 5.0, cy + 6.8, 2.2, 2.0);
+
+    // Head (lighter skin tone for better contrast).
+    const headY = cy - 6;
+    ctx.fillStyle = "#f5d5b0";
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Beard (medium-dark brown, narrow shape hanging under chin - breaks mouth illusion).
+    ctx.fillStyle = "rgba(76,46,28,.88)";
+    ctx.beginPath();
+    ctx.ellipse(cx + 0.2, headY + 4.6, 3.6, 1.9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Beard outline with darker shade for definition.
+    ctx.strokeStyle = "rgba(38,23,14,.75)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(cx + 0.2, headY + 4.6, 3.6, 1.9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Knit cap/hood (desaturated steel blue, weathered look - top only, no band under face).
+    ctx.fillStyle = "rgba(70,130,180,.88)";
+    ctx.beginPath();
+    ctx.arc(cx, headY - 2.5, 5.5, Math.PI, Math.PI * 2);
+    ctx.fill();
+    // Darker cap outline for better frame.
+    ctx.strokeStyle = "rgba(30,60,100,.85)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(cx, headY - 2.5, 5.5, Math.PI, Math.PI * 2);
+    ctx.stroke();
+
+    // Cap top highlight for silhouette clarity (subtle).
+    ctx.strokeStyle = "rgba(180,200,220,.3)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(cx, headY - 2.5, 5.5, Math.PI * 1.2, Math.PI * 1.8);
+    ctx.stroke();
+
+    // Eyes (larger, very dark for readability).
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(cx - 2.2 + sway * 0.15, headY - 0.5, 1.3, 0, Math.PI * 2);
+    ctx.arc(cx + 2.2 + sway * 0.15, headY - 0.5, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Darker shadow under beard to add depth and weathering.
+    ctx.fillStyle = "rgba(0,0,0,.25)";
+    ctx.beginPath();
+    ctx.ellipse(cx, headY + 6.0, 3.6, 1.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Left arm (holding hook/pole).
+    const shoulderLX = cx - 4.1;
+    const shoulderLY = cy + 2.5;
+    const elbowLX = cx - 7.2 + sway * 0.08;
+    const elbowLY = cy + 4.7;
+    const handLX = cx - 8.5;
+    const handLY = cy + 2.5;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 3.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    // Hand.
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handLX, handLY, 1.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hook/pole (curved hook shape with better silhouette).
+    ctx.save();
+    ctx.translate(handLX, handLY);
+    // Hook pole (gray metal).
+    ctx.strokeStyle = "#777777";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(0, -3);
+    ctx.lineTo(0, 2);
+    ctx.stroke();
+    // Hook curve.
+    ctx.strokeStyle = "#777777";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.arc(-1.2, 2, 1.2, 0, Math.PI * 0.5);
+    ctx.stroke();
+    // Hook shadow/outline.
+    ctx.strokeStyle = "rgba(0,0,0,.5)";
+    ctx.lineWidth = 1.0;
+    ctx.beginPath();
+    ctx.moveTo(0, -3);
+    ctx.lineTo(0, 2);
+    ctx.arc(-1.2, 2, 1.2, 0, Math.PI * 0.5);
+    ctx.stroke();
+    ctx.restore();
+
+    // Right arm (resting).
+    const shoulderRX = cx + 3.7;
+    const shoulderRY = cy + 2.9;
+    const elbowRX = cx + 6.7 + sway * 0.05;
+    const elbowRY = cy + 4.9;
+    const handRX = cx + 5.7;
+    const handRY = cy + 7.2;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 1.9;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handRX, handRY, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawMayorAlden(x, y){
+    const t = now();
+    const cx = x * TILE + TILE / 2;
+    const cy = y * TILE + TILE / 2 + Math.sin(t * 0.005 + x * 0.6 + y * 0.9) * 0.28;
+    const sway = Math.sin(t * 0.004 + x * 1.2 + y * 0.5) * 0.65;
+    ctx.save();
+
+    // Ground shadow.
+    ctx.fillStyle = "rgba(0,0,0,.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 13, 10.2, 5.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Boots and trousers (formal).
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(cx - 8, cy + 10, 6, 3);
+    ctx.fillRect(cx + 2, cy + 10, 6, 3);
+    ctx.fillStyle = "#1f2937";
+    ctx.fillRect(cx - 7, cy + 4, 5, 6);
+    ctx.fillRect(cx + 2, cy + 4, 5, 6);
+
+    // Torso (formal coat - purple/gray).
+    ctx.fillStyle = "rgba(55,65,81,.96)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 4.8, 7.8, 8.9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sash/cape (gold trim accent).
+    ctx.fillStyle = "rgba(217,119,6,.88)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 5.9, 6.2, 8.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 5.9, 6.2, 8.0, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Gold sash diagonal stripe for hierarchy.
+    ctx.strokeStyle = "rgba(251,191,36,.75)";
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, cy - 2);
+    ctx.lineTo(cx + 5, cy + 10);
+    ctx.stroke();
+
+    // Gold trim vertical line.
+    ctx.strokeStyle = "rgba(251,191,36,.65)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 0.5);
+    ctx.lineTo(cx, cy + 12);
+    ctx.stroke();
+
+    // Head.
+    const headY = cy - 6;
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,.45)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Hair (gray/white, older appearance).
+    ctx.fillStyle = "rgba(209,213,219,.92)";
+    ctx.beginPath();
+    ctx.arc(cx, headY - 1.2, 7.2, Math.PI, Math.PI * 2);
+    ctx.fill();
+
+    // Simple formal hat (top hat silhouette).
+    ctx.fillStyle = "rgba(30,30,30,.95)";
+    ctx.fillRect(cx - 3.2, headY - 10, 6.4, 4.2);
+    ctx.fillRect(cx - 4.8, headY - 6.5, 9.6, 1.2);
+    // Brighter hat trim for hierarchy.
+    ctx.strokeStyle = "rgba(251,191,36,.85)";
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(cx - 3.2, headY - 10, 6.4, 4.2);
+    ctx.strokeRect(cx - 4.8, headY - 6.5, 9.6, 1.2);
+
+    // Eyes.
+    ctx.fillStyle = "rgba(0,0,0,.62)";
+    ctx.beginPath();
+    ctx.arc(cx - 2.0 + sway * 0.15, headY - 1.2, 1, 0, Math.PI * 2);
+    ctx.arc(cx + 2.0 + sway * 0.15, headY - 1.2, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Left arm (resting).
+    const shoulderLX = cx - 4.1;
+    const shoulderLY = cy + 2.5;
+    const elbowLX = cx - 6.8 + sway * 0.08;
+    const elbowLY = cy + 4.2;
+    const handLX = cx - 7.2;
+    const handLY = cy + 7.0;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 3.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.moveTo(shoulderLX, shoulderLY);
+    ctx.lineTo(elbowLX, elbowLY);
+    ctx.lineTo(handLX, handLY);
+    ctx.stroke();
+
+    // Hand.
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handLX, handLY, 1.35, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Right arm (resting).
+    const shoulderRX = cx + 3.7;
+    const shoulderRY = cy + 2.9;
+    const elbowRX = cx + 6.7 + sway * 0.05;
+    const elbowRY = cy + 4.9;
+    const handRX = cx + 5.7;
+    const handRY = cy + 7.2;
+
+    ctx.strokeStyle = "#3f2b1f";
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#8b5e34";
+    ctx.lineWidth = 1.9;
+    ctx.beginPath();
+    ctx.moveTo(shoulderRX, shoulderRY);
+    ctx.lineTo(elbowRX, elbowRY);
+    ctx.lineTo(handRX, handRY);
+    ctx.stroke();
+
+    ctx.fillStyle = "#f2c9a0";
+    ctx.beginPath();
+    ctx.arc(handRX, handRY, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
   function drawQuestNpc(x, y, showMarker = true){
     const t = now();
     const cx = x * TILE + TILE / 2;
@@ -5731,6 +7381,38 @@ function drawAnvil(x,y){
       ctx.fillRect(sx, sy, 1.8, 1.8);
     }
   }
+}
+
+function drawCauldron(x, y){
+  const px = x * TILE;
+  const py = y * TILE;
+  const t = now();
+  const simmer = 0.75 + 0.25 * Math.sin(t * 0.02 + x + y);
+
+  ctx.fillStyle = "rgba(0,0,0,.25)";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 23, 10, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#2f3b46";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 17, 9, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#475569";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 14, 9, 3, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = `rgba(34,197,94,${0.25 + 0.2 * simmer})`;
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 14, 7, 2.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(px + 9, py + 22, 3, 4);
+  ctx.fillRect(px + 20, py + 22, 3, 4);
 }
 
 function drawLadder(x, y, mode = "down"){
@@ -6167,6 +7849,161 @@ function drawStarterCastleDecor(){
   ctx.restore();
 }
 
+function drawDockDecor(){
+  const {startX,startY,endX,endY} = visibleTileBounds();
+  const dockX = 31;
+  const dockShoreY = 21;    // RIVER_Y - 1, the shore tile
+  const dockWaterY = 22;    // RIVER_Y, first water tile
+
+  // Skip if dock not in visible area (check entire pier bounds)
+  if (dockX < startX - 1 || dockX > endX + 1 || dockShoreY < startY - 1 || dockWaterY > endY + 1) return;
+
+  const dockComplete = getProjectState("rivermoor", "dock") === "complete";
+  ctx.save();
+
+  // Color scheme - pixel art browns
+  const plankColorBright = dockComplete ? "#A0826D" : "#7A6B5A";   // main plank color
+  const plankColorDark = dockComplete ? "#7A6347" : "#5A4B3A";     // shadow/dark lines
+  const postColorBright = dockComplete ? "#8B6F47" : "#6B5F3F";    // post color
+  const postColorDark = dockComplete ? "#6A5835" : "#4A4A2A";      // post shadow
+
+  function drawPixelPlank(tx, ty, isBroken = false) {
+    // Draw individual wooden planks stacked horizontally with pixel art style
+    const px = tx * TILE;
+    const py = ty * TILE;
+    const plankGap = 2;
+    const plankHeight = 6;
+
+    // Draw 4-5 horizontal planks
+    for (let i = 0; i < 5; i++) {
+      const plankY = py + 4 + i * (plankHeight + plankGap);
+
+      // Skip drawing some planks if broken (simulates missing boards)
+      if (isBroken && (i === 1 || i === 3)) continue;
+
+      // Main plank
+      ctx.fillStyle = plankColorBright;
+      ctx.fillRect(px + 2, plankY, TILE - 4, plankHeight);
+
+      // Dark edge (wood grain/shadow)
+      ctx.fillStyle = plankColorDark;
+      ctx.fillRect(px + 2, plankY + plankHeight - 1, TILE - 4, 1);
+
+      // Broken state: add crack lines
+      if (isBroken && i === 0) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px + 4, plankY + 1);
+        ctx.lineTo(px + TILE - 4, plankY + 4);
+        ctx.stroke();
+      }
+      if (isBroken && i === 2) {
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px + 8, plankY + 1);
+        ctx.lineTo(px + TILE - 6, plankY + 5);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawPixelPost(tx, ty) {
+    // Draw a vertical support post with stacked segments
+    const px = tx * TILE + TILE * 0.25;
+    const py = ty * TILE + 2;
+    const postWidth = TILE * 0.5;
+    const segmentHeight = 8;
+    const segmentGap = 1;
+
+    // Draw 3-4 stacked segments
+    for (let i = 0; i < 4; i++) {
+      const segY = py + i * (segmentHeight + segmentGap);
+
+      // Main segment
+      ctx.fillStyle = postColorBright;
+      ctx.fillRect(px, segY, postWidth, segmentHeight);
+
+      // Side shadow
+      ctx.fillStyle = postColorDark;
+      ctx.fillRect(px, segY, 2, segmentHeight);
+      ctx.fillRect(px + postWidth - 2, segY, 2, segmentHeight);
+
+      // Bottom edge shadow
+      ctx.fillRect(px, segY + segmentHeight - 1, postWidth, 1);
+    }
+  }
+
+  // SHORE PLANK (always visible, connects to land)
+  drawPixelPlank(dockX, dockShoreY, !dockComplete);
+
+  // REPAIRED DOCK: Full pier extending into water
+  if (dockComplete) {
+    // Water plank (extends pier into river)
+    drawPixelPlank(dockX, dockWaterY, false);
+
+    // Flanking posts in the water (support the pier)
+    drawPixelPost(dockX - 1, dockWaterY);
+    drawPixelPost(dockX + 1, dockWaterY);
+  }
+
+  ctx.restore();
+}
+
+function drawHearthDecor(){
+  if (getProjectState("rivermoor", "hearth") !== "complete") return;
+  const {startX,startY,endX,endY} = visibleTileBounds();
+  const x0 = HEARTH_CAMP_BOUNDS.x0;
+  const y0 = HEARTH_CAMP_BOUNDS.y0;
+  const x1 = HEARTH_CAMP_BOUNDS.x1;
+  const y1 = HEARTH_CAMP_BOUNDS.y1;
+  if (x1 < startX - 1 || x0 > endX + 1 || y1 < startY - 1 || y0 > endY + 1) return;
+
+  function inView(tx, ty){
+    return !(tx < startX - 1 || tx > endX + 1 || ty < startY - 1 || ty > endY + 1);
+  }
+
+  function drawLog(tx, ty){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    ctx.fillStyle = "#6b4f2a";
+    ctx.fillRect(px + 6, py + 18, 20, 6);
+    ctx.fillStyle = "#8b6a3f";
+    ctx.fillRect(px + 6, py + 16, 20, 3);
+    ctx.fillStyle = "rgba(0,0,0,.2)";
+    ctx.fillRect(px + 7, py + 22, 18, 2);
+  }
+
+  function drawStool(tx, ty){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    ctx.fillStyle = "#7c4a24";
+    ctx.fillRect(px + 10, py + 16, 12, 8);
+    ctx.fillStyle = "#5b3619";
+    ctx.fillRect(px + 11, py + 23, 2, 5);
+    ctx.fillRect(px + 19, py + 23, 2, 5);
+  }
+
+  function drawWoodPile(tx, ty){
+    if (!inView(tx, ty)) return;
+    const px = tx * TILE;
+    const py = ty * TILE;
+    ctx.fillStyle = "#8b6a3f";
+    ctx.fillRect(px + 6, py + 15, 20, 10);
+    ctx.fillStyle = "#6b4f2a";
+    ctx.fillRect(px + 8, py + 17, 16, 2);
+    ctx.fillRect(px + 8, py + 21, 16, 2);
+  }
+
+  drawLog(3, 16);
+  drawLog(5, 16);
+  drawStool(4, 17);
+  drawWoodPile(6, 15);
+}
+
 function drawDungeonDecor(){
   if (getActiveZone() !== ZONE_KEYS.DUNGEON) return;
 
@@ -6242,6 +8079,8 @@ function drawDungeonDecor(){
     if (getActiveZone() === ZONE_KEYS.OVERWORLD) {
       drawStarterCastleDecor();
       drawVendorShopDecor();
+      drawDockDecor();
+      drawHearthDecor();
     }
     const {startX,startY,endX,endY}=visibleTileBounds();
     for (const it of interactables){
@@ -6320,7 +8159,7 @@ if (it.type==="ladder_up") drawLadder(it.x, it.y, "up");
   ctx.restore();
 }
 
-if (it.type === "fish"){
+if (it.type === "fish" || it.type === "fish_dock"){
   const cx = it.x * TILE + TILE/2;
   const cy = it.y * TILE + TILE/2;
   const t = now();
@@ -6347,11 +8186,20 @@ if (it.type === "fish"){
   ctx.restore();
 }
 
+if (it.type === "cauldron") drawCauldron(it.x, it.y);
+
 
 if (it.type==="vendor") drawVendorNpc(it.x, it.y);
 if (it.type==="quest_npc"){
-  if (String(it.npcId || "") === "blacksmith_torren") drawBlacksmithNpc(it.x, it.y);
-  else drawQuestNpc(it.x, it.y, npcHasPendingQuestMarker(it.npcId));
+  drawQuestNpc(it.x, it.y, npcHasPendingQuestMarker(it.npcId));
+}
+if (it.type==="project_npc"){
+  const npcId = String(it.npcId || "");
+  if (npcId === "blacksmith_torren") drawBlacksmithNpc(it.x, it.y);
+  else if (npcId === "hearth_keeper") drawMaraHearthkeeper(it.x, it.y);
+  else if (npcId === "dock_foreman") drawGarrickForeman(it.x, it.y);
+  else if (npcId === "mayor") drawMayorAlden(it.x, it.y);
+  else drawQuestNpc(it.x, it.y, false);
 }
 if (it.type==="sealed_gate") drawSealedGate(it.x, it.y, !!it.open, it.segment || "single");
 if (it.type==="brazier") drawDungeonBrazier(it.x, it.y, !!it.lit);
@@ -6494,6 +8342,43 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
   ctx.fillStyle="rgba(0,0,0,.28)";
   ctx.beginPath();
   ctx.ellipse(cx, cy+14, 10 + Math.abs(step)*1.5, 5, 0, 0, Math.PI*2);
+
+function drawCauldron(x, y){
+  const px = x * TILE;
+  const py = y * TILE;
+  const t = now();
+  const simmer = 0.75 + 0.25 * Math.sin(t * 0.02 + x + y);
+
+  // Base shadow
+  ctx.fillStyle = "rgba(0,0,0,.25)";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 23, 10, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Pot body
+  ctx.fillStyle = "#2f3b46";
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 17, 9, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rim
+  ctx.strokeStyle = "#475569";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 14, 9, 3, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Simmering surface
+  ctx.fillStyle = `rgba(34,197,94,${0.25 + 0.2 * simmer})`;
+  ctx.beginPath();
+  ctx.ellipse(px + 16, py + 14, 7, 2.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(px + 9, py + 22, 3, 4);
+  ctx.fillRect(px + 20, py + 22, 3, 4);
+}
   ctx.fill();
 
 
@@ -6852,6 +8737,11 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
       opts.push({label:"Examine Campfire", onClick:()=>examineEntity(ent)});
       opts.push({type:"sep"});
       opts.push({label:"Walk here", onClick:walkHere});
+    } else if (ent?.kind==="cauldron"){
+      opts.push({label:"Cook", onClick:()=>beginInteraction(ent)});
+      opts.push({label:"Examine Cauldron", onClick:()=>examineEntity(ent)});
+      opts.push({type:"sep"});
+      opts.push({label:"Walk here", onClick:walkHere});
 } else if (ent?.kind==="fish"){
   opts.push({label:"Fish", onClick:()=>beginInteraction(ent)});
   opts.push({label:"Examine Fishing Spot", onClick:()=>examineEntity(ent)});
@@ -6868,6 +8758,12 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
 } else if (ent?.kind==="quest_npc"){
   opts.push({label:`Talk-to ${ent.label ?? "Quartermaster"}`, onClick:()=>beginInteraction(ent)});
   opts.push({label:`Examine ${ent.label ?? "Quartermaster"}`, onClick:()=>examineEntity(ent)});
+  opts.push({type:"sep"});
+  opts.push({label:"Walk here", onClick:walkHere});
+
+} else if (ent?.kind==="project_npc"){
+  opts.push({label:`Talk-to ${ent.label ?? "NPC"}`, onClick:()=>beginInteraction(ent)});
+  opts.push({label:`Examine ${ent.label ?? "NPC"}`, onClick:()=>examineEntity(ent)});
   opts.push({type:"sep"});
   opts.push({label:"Walk here", onClick:walkHere});
 
@@ -6973,19 +8869,21 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     applyQuestSnapshot,
     getWorldUpgradeSnapshot,
     applyWorldUpgradeSnapshot,
+    getTownRenownSnapshot,
+    applyTownRenownSnapshot,
+    getQuestRenownSnapshot,
+    applyQuestRenownSnapshot,
+    getWardenDefeatSnapshot,
+    applyWardenDefeatSnapshot,
+    getProjectSnapshot,
+    applyProjectSnapshot,
     onZoneChanged: () => {
       rebuildNavigation();
       updateCamera();
     },
     renderAfterLoad: () => {
       seedDungeonZone({ forcePopulateMobs: false, migrateLegacyPositions: true });
-      renderSkills();
-      renderQuests();
-      renderInv();
-      renderBank();
-      renderEquipment();
-      renderQuiver();
-      renderHPHUD();
+      renderPanelsAfterLoad();
       updateCamera();
     }
   });
@@ -6993,11 +8891,8 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
   function loadCharacterSaveById(charId){
     const saveRow = readSaveDataByCharId(charId);
     if (!saveRow?.raw) return false;
-    let hasDungeonZoneSave = false;
-    try {
-      const parsed = JSON.parse(saveRow.raw);
-      hasDungeonZoneSave = !!parsed?.zones?.dungeon;
-    } catch {}
+    const parsed = parseMaybeJSON(saveRow.raw);
+    const hasDungeonZoneSave = !!(parsed && typeof parsed === "object" && parsed?.zones?.dungeon);
 
     setActiveCharacterId(charId);
     const profile = getStoredCharacterProfile(charId);
@@ -7025,11 +8920,38 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
 
   document.getElementById("saveBtn").onclick=()=>{
     saveCharacterPrefs({ createNew: false });
-    localStorage.setItem(getCurrentSaveKey(), serialize());
+    writeStoredValue(getCurrentSaveKey(), serialize());
     refreshStartOverlay();
     const profile = getStoredCharacterProfile();
     chatLine(`<span class="good">Saved ${profile?.name ?? "character"}.</span>`);
   };
+
+  /**
+   * Show townboarding modal if not yet seen
+   */
+  function checkAndShowTownboardingModal() {
+    if (townboardingOverlay && !player._hasSeenTownOnboarding) {
+      townboardingOverlay.style.display = "flex";
+      player._hasSeenTownOnboarding = true;
+    }
+  }
+
+  /**
+   * Close townboarding modal
+   */
+  function closeTownboardingModal() {
+    if (townboardingOverlay) {
+      townboardingOverlay.style.display = "none";
+    }
+  }
+
+  // Townboarding modal button handler
+  if (townboardingBtn) {
+    townboardingBtn.onclick = () => {
+      closeTownboardingModal();
+    };
+  }
+
   document.getElementById("loadBtn").onclick=()=>{
     openLoadCharacterOverlay((charId) => {
       if (!loadCharacterSaveById(charId)){
@@ -7038,7 +8960,7 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     });
   };
   document.getElementById("resetBtn").onclick=()=>{
-    localStorage.removeItem(getCurrentSaveKey());
+    removeStoredValue(getCurrentSaveKey());
     refreshStartOverlay();
     const profile = getStoredCharacterProfile();
     chatLine(`<span class="warn">Cleared save for ${profile?.name ?? "active character"}.</span>`);
@@ -7087,18 +9009,15 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
 
   const bgmState = (() => {
     const d = { on:false, vol:0.25 };
-    try{
-      const raw = localStorage.getItem(BGM_KEY);
-      if (!raw) return d;
-      const s = JSON.parse(raw);
-      if (typeof s.on === "boolean") d.on = s.on;
-      if (typeof s.vol === "number") d.vol = clamp(s.vol, 0, 1);
-    }catch{}
+    const s = readStoredJSON(BGM_KEY, null);
+    if (!s || typeof s !== "object") return d;
+    if (typeof s.on === "boolean") d.on = s.on;
+    if (typeof s.vol === "number") d.vol = clamp(s.vol, 0, 1);
     return d;
   })();
 
   function saveBgmState(){
-    try{ localStorage.setItem(BGM_KEY, JSON.stringify(bgmState)); }catch{}
+    writeStoredJSON(BGM_KEY, bgmState);
   }
 
   function updateBgmUI(){
@@ -7119,6 +9038,53 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
     bgm.volume = clamp(bgmState.vol, 0, 1);
     if (bgmState.on) tryPlayBgm();
     else bgm.pause();
+  }
+
+  function findInteractableIndexInRange(type, rangeTiles = 1.1, predicate = null){
+    for (let i = 0; i < interactables.length; i++){
+      const it = interactables[i];
+      if (it.type !== type) continue;
+      if (predicate && !predicate(it)) continue;
+      if (inRangeOfTile(it.x, it.y, rangeTiles)) return i;
+    }
+    return -1;
+  }
+
+  function updateStationAvailability(){
+    availability.bank = findInteractableIndexInRange("bank") >= 0;
+    updateBankIcon();
+
+    const vendorIndex = findInteractableIndexInRange("vendor");
+    availability.vendor = vendorIndex >= 0;
+    availability.vendorInRangeIndex = vendorIndex;
+    updateVendorIcon();
+    if (windowsOpen.vendor && !availability.vendor){
+      closeWindow("vendor");
+    }
+
+    availability.smithing = findInteractableIndexInRange("anvil") >= 0;
+    if (windowsOpen.smithing && !availability.smithing){
+      closeWindow("smithing");
+    }
+
+    availability.blacksmith = findInteractableIndexInRange(
+      "quest_npc",
+      1.1,
+      (it) => String(it.npcId || "") === "blacksmith_torren"
+    ) >= 0;
+    if (windowsOpen.blacksmith && !availability.blacksmith){
+      closeWindow("blacksmith");
+    }
+  }
+
+  function expireCampfiresAndPruneLoot(t){
+    for (let i = interactables.length - 1; i >= 0; i--){
+      const it = interactables[i];
+      if (it.type !== "fire" || !it.expiresAt || t < it.expiresAt) continue;
+      interactables.splice(i, 1);
+      // Keep loot pruning behavior aligned with existing fire-expiry flow.
+      pruneExpiredGroundLoot();
+    }
   }
 
   updateBgmUI();
@@ -7194,76 +9160,14 @@ function drawSmeltingAnimation(cx, cy, fx, fy, pct){
         pushMobOffPlayerTile(m);
       }
     }
-    // expire campfires
-    for (let i=interactables.length-1; i>=0; i--){
-      const it = interactables[i];
-      if (it.type==="fire" && it.expiresAt && t >= it.expiresAt){
-        interactables.splice(i,1);
-// expire ground loot
-pruneExpiredGroundLoot();
+    // expire campfires + associated ground-loot pruning
+    expireCampfiresAndPruneLoot(t);
 
-      }
+    // Station windows and availability are range-gated each tick.
+    updateStationAvailability();
 
-    }
-
-    // bank availability (supports multiple bank chests).
-    availability.bank = false;
-    for (let i = 0; i < interactables.length; i++){
-      const it = interactables[i];
-      if (it.type !== "bank") continue;
-      if (inRangeOfTile(it.x, it.y, 1.1)){
-        availability.bank = true;
-        break;
-      }
-    }
-    updateBankIcon();
-// vendor availability (vendor only)
-
-availability.vendor = false;
-availability.vendorInRangeIndex = -1;
-
-for (let i=0; i<interactables.length; i++){
-  const it = interactables[i];
-  if (it.type !== "vendor") continue;
-
-  if (inRangeOfTile(it.x, it.y, 1.1)){
-    availability.vendor = true;
-    availability.vendorInRangeIndex = i;
-    break;
-  }
-}
-
-updateVendorIcon();
-if (windowsOpen.vendor && !availability.vendor){
-  closeWindow("vendor");
-}
-
-availability.smithing = false;
-for (let i=0; i<interactables.length; i++){
-  const it = interactables[i];
-  if (it.type !== "anvil") continue;
-  if (inRangeOfTile(it.x, it.y, 1.1)){
-    availability.smithing = true;
-    break;
-  }
-}
-if (windowsOpen.smithing && !availability.smithing){
-  closeWindow("smithing");
-}
-
-availability.blacksmith = false;
-for (let i=0; i<interactables.length; i++){
-  const it = interactables[i];
-  if (it.type !== "quest_npc") continue;
-  if (String(it.npcId || "") !== "blacksmith_torren") continue;
-  if (inRangeOfTile(it.x, it.y, 1.1)){
-    availability.blacksmith = true;
-    break;
-  }
-}
-if (windowsOpen.blacksmith && !availability.blacksmith){
-  closeWindow("blacksmith");
-}
+    // Check town project builds every tick
+    tickProjectBuilds(t);
 
 
 
@@ -7328,19 +9232,21 @@ if (windowsOpen.blacksmith && !availability.blacksmith){
       syncPlayerPix();
       if (player.target) ensureWalkIntoRangeAndAct();
     }
-// mobs: aggro + move + attack
-updateDungeonQuestTriggers();
-updateMobsAI(dt);
-if (player.hp <= 0) handlePlayerDeath();
+    // mobs: aggro + move + attack
+    updateDungeonQuestTriggers();
+    updateMobsAI(dt);
+    if (player.hp <= 0) handlePlayerDeath();
 
 
     // auto-loot ground piles when in range
     attemptAutoLoot();
 
-        updateFX(); 
+        updateFX();
     updateCamera();
     updateCoordsHUD();
     renderHPHUD();
+    // Update town projects window if open
+    if (windowsOpen.townProjects) renderTownProjectsUI();
 
   }
 
@@ -7398,6 +9304,33 @@ if (player.hp <= 0) handlePlayerDeath();
     ctx.setTransform(1,0,0,1,0,0);
     drawMinimap();
     xpOrbs.draw();
+
+    // ========== DEBUG OVERLAY ==========
+    if (showDebugOverlay) {
+      const activeZone = (typeof getActiveZone === "function") ? getActiveZone() : "unknown";
+      const zoneState = (typeof getZoneState === "function") ? getZoneState(activeZone) : null;
+      const interactablesArray = (zoneState && zoneState.interactables) || interactables || [];
+      const projectNpcCount = interactablesArray.filter(it => it?.type === "project_npc").length;
+      const projectNpcIds = interactablesArray.filter(it => it?.type === "project_npc").map(it => it?.npcId).join(", ");
+      const totalCount = interactablesArray.length;
+
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.fillRect(10, 10, 350, 120);
+      
+      ctx.fillStyle = "#FBF124";
+      ctx.font = "bold 14px monospace";
+      ctx.fillText("[DEBUG OVERLAY - F9 to toggle]", 15, 30);
+      
+      ctx.font = "12px monospace";
+      ctx.fillStyle = "#FFF";
+      ctx.fillText(`Zone: ${activeZone}`, 15, 50);
+      ctx.fillText(`Total Interactables: ${totalCount}`, 15, 68);
+      ctx.fillText(`Project NPCs: ${projectNpcCount}`, 15, 86);
+      ctx.fillText(`NPC IDs: ${projectNpcIds || "(none)"}`, 15, 104);
+      
+      ctx.restore();
+    }
   }
 
   function loop(){
@@ -7409,9 +9342,42 @@ if (player.hp <= 0) handlePlayerDeath();
     requestAnimationFrame(loop);
   }
 
+  // ========== DEBUG OVERLAY (F9 TOGGLE) ==========
+  let showDebugOverlay = false;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "F9" || e.code === "F9") {
+      e.preventDefault();
+      showDebugOverlay = !showDebugOverlay;
+      console.log(`[DEBUG] Overlay toggled: ${showDebugOverlay ? "ON" : "OFF"}`);
+    }
+  });
+
   // ---------- Boot ----------
   function bootstrap(){
 initWorldSeed();
+
+    // Initialize town system modules with game callbacks
+    initTownSystem({ chatLine, now, checkProjectUnlocks });
+    initProjectsSystem({
+      getTownRenown,
+      spendGold,
+      chatLine,
+      now,
+      applyProjectBenefit,
+      ensureInteractable,
+      SMITHING_BANK_TILE,
+      getHearthCampTile: getHearthCampCauldronTile
+    });
+    initDonationSystem({
+      getTownRenown,
+      grantTownRenown,
+      spendGold,
+      chatLine
+    });
+
+    // Update decor lookup after projects system is ready (in case they were loaded from save)
+    getDecorAt = reinitializeDecorLookup();
+
     ensureCharacterMigration();
     getActiveCharacterId();
 
@@ -7446,13 +9412,7 @@ initWorldSeed();
       openStartOverlay();
     }
 
-    renderEquipment();
-    renderInv();
-    renderSkills();
-    renderQuests();
-    renderBank();
-    renderQuiver();
-    renderHPHUD();
+    renderPanelsOnBootstrap();
 
     if (!TEST_MODE) {
       chatLine(`<span class="muted">Tip:</span> Talk to Quartermaster Bryn in the starter castle to begin your first quest.`);
@@ -7465,6 +9425,184 @@ initWorldSeed();
 
   // ---------- Bank icon initialization ----------
   updateBankIcon();
+
+  // Expose renown functions for debug API
+  const _grantQuestRenownImpl = grantQuestRenown;
+  const _grantWardenDefeatRenownImpl = grantWardenDefeatRenown;
+
+  // ========== DEBUG WINDOW (PASS 1 & PASS 2) ==========
+  window.debugRenown = {
+    grant: (amount) => grantTownRenown("rivermoor", amount | 0, "[debug]"),
+    check: () => {
+      const towns = getTownsRef();
+      return {
+        renown: towns.rivermoor.renown,
+        milestones: { ...towns.rivermoor.milestones }
+      };
+    },
+    reset: () => {
+      resetTownState();
+      chatLine("<span class=\"muted\">[debug] Renown reset to 0</span>");
+    },
+    // PASS 2: Quest renown testing
+    completeQuest: (questId) => {
+      const success = completeQuest(questId);
+      if (success) {
+        chatLine(`<span class="muted">[debug] Quest ${questId} completed</span>`);
+      } else {
+        chatLine(`<span class="warn">[debug] Failed to complete quest ${questId}</span>`);
+      }
+      return success;
+    },
+    checkQuestRenown: () => ({ ...renownGrants.quests }),
+    resetQuestRenown: () => {
+      renownGrants.quests = {};
+      chatLine("<span class=\"muted\">[debug] Quest renown grants reset</span>");
+    },
+    grantQuestRenown: (questId) => {
+      const success = _grantQuestRenownImpl(questId);
+      if (success) {
+        chatLine(`<span class="muted">[debug] Quest renown granted for ${questId}</span>`);
+      } else {
+        chatLine(`<span class="warn">[debug] Quest renown already granted or unknown quest</span>`);
+      }
+      return success;
+    },
+    // PASS 3: Warden defeat testing
+    grantWardenDefeat: () => {
+      const success = _grantWardenDefeatRenownImpl();
+      if (success) {
+        chatLine(`<span class="muted">[debug] Warden defeat renown granted</span>`);
+      } else {
+        chatLine(`<span class="warn">[debug] Warden renown already granted or in cooldown</span>`);
+      }
+      return success;
+    },
+    checkWardenDefeat: () => ({ ...renownGrants.wardens }),
+    resetWardenDefeat: () => {
+      renownGrants.wardens = {};
+      chatLine("<span class=\"muted\">[debug] Warden defeat tracking reset</span>");
+    },
+    // PASS 4A: Town projects testing
+    fundDock: () => {
+      const result = fundTownProject("rivermoor", "dock");
+      if (result.success) {
+        chatLine(`<span class="good">[debug] Dock project funded! Building...</span>`);
+      } else {
+        chatLine(`<span class="warn">[debug] Dock funding failed: ${result.reason}</span>`);
+      }
+      return result;
+    },
+    projectState: () => {
+      const state = getProjectState("rivermoor", "dock");
+      const proj = getProjectsRef()?.rivermoor?.dock;
+      return {
+        state,
+        fundedAt: proj?.fundedAt || 0,
+        completedAt: proj?.completedAt || 0,
+        buildTimeMs: proj?.buildTimeMs || 15000
+      };
+    },
+    resetProjects: () => {
+      resetProjectState();
+      chatLine("<span class=\"muted\">[debug] Projects reset to locked</span>");
+    },
+    // PASS 5B: Town projects UI
+    openProjectsUI: () => {
+      openWindow("townProjects");
+      chatLine("<span class=\"muted\">[debug] Town Projects window opened</span>");
+    },
+    // Debug: inspect interactables
+    getInteractables: (filter = {}) => {
+      const { type, x, y } = filter;
+      let results = interactables;
+      if (type) results = results.filter(i => i.type === type);
+      if (x !== undefined) results = results.filter(i => i.x === x);
+      if (y !== undefined) results = results.filter(i => i.y === y);
+      return results;
+    },
+    // Debug: add items to inventory for testing
+    addItem: (itemId, qty = 1) => {
+      const added = addToInventory(itemId, qty | 0);
+      chatLine(`<span class="muted">[debug] Added ${added}x ${itemId} to inventory</span>`);
+      return added;
+    },
+    // Debug: Load full test loadout (items + gold + renown for all projects)
+    testLoadout: () => {
+      chatLine(`<span class="good">[debug] Test loadout starting...</span>`);
+      
+      // Directly add items to bank by finding slots
+      try {
+        // Clear bank first
+        for (let i = 0; i < bank.length; i++) {
+          bank[i] = null;
+        }
+        
+        // Add logs
+        bank[0] = { id: 'log', qty: 100 };
+        chatLine(`<span class="muted">[debug] Added 100 logs</span>`);
+        
+        // Add iron bars  
+        bank[1] = { id: 'iron_bar', qty: 15 };
+        chatLine(`<span class="muted">[debug] Added 15 iron bars</span>`);
+        
+        // Add cooked food
+        bank[2] = { id: 'cooked_rat_meat', qty: 15 };
+        chatLine(`<span class="muted">[debug] Added 15 cooked food</span>`);
+        
+        // Add crude bars
+        bank[3] = { id: 'crude_bar', qty: 5 };
+        chatLine(`<span class="muted">[debug] Added 5 crude bars</span>`);
+        
+        // Add gold
+        wallet.gold = 2000;
+        chatLine(`<span class="muted">[debug] Set gold to 2000</span>`);
+        
+        // Add renown
+        grantTownRenown("rivermoor", 70, "[debug testLoadout]");
+        chatLine(`<span class="muted">[debug] Added 70 renown</span>`);
+        
+        // Open bank and render
+        openWindow("bank");
+        renderBank();
+        
+        chatLine(`<span class="good">[debug] Test loadout complete!</span>`);
+        return true;
+      } catch (e) {
+        chatLine(`<span class="warn">[debug] ERROR: ${e.message}</span>`);
+        console.error(e);
+        return false;
+      }
+    },
+    // Debug: complete First Watch, set combat skills to 15, equip iron gear
+    firstWatchIron15: () => {
+      const completed = completeQuest("first_watch");
+      const targetXp = xpForLevel(15);
+      const combatSkills = ["health", "accuracy", "power", "defense", "ranged", "sorcery"];
+      for (const key of combatSkills) {
+        if (Skills[key]) Skills[key].xp = targetXp;
+      }
+      recalcMaxHPFromHealth();
+      player.hp = player.maxHp;
+      renderSkills();
+      renderHPHUD();
+
+      const equipItem = (itemId) => {
+        addToInventory(itemId, 1);
+        const idx = inv.findIndex(s => s && s.id === itemId);
+        if (idx >= 0) equipFromInv(idx);
+      };
+
+      equipItem("iron_helm");
+      equipItem("iron_body");
+      equipItem("iron_legs");
+      equipItem("iron_shield");
+      equipItem("iron_sword");
+      renderInventoryAndEquipment();
+      return completed;
+    }
+  };
+  // ========== DEBUG WINDOW (PASS 1, PASS 2, PASS 3, PASS 4) ==========
 
   bootstrap();
   loop();

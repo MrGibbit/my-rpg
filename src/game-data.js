@@ -1,3 +1,61 @@
+// ========== RIVERMOOR RENOWN SYSTEM ==========
+export const RENOWN_SOURCES = {
+  FIRST_QUEST: 20,
+  SECOND_QUEST: 20,
+  FIRST_WARDEN_KILL: 20,
+  WARDEN_KILL_SUBSEQUENT: 1,
+  PROJECT_COMPLETION: 10,
+  GOLD_DONATION_PER_100: 0       // Gold donations do NOT grant renown (removed to prevent farming)
+};
+
+// Rivermoor tutorial cap is 70 renown
+export const RENOWN_MILESTONES = {
+  10: "Mayor watches",
+  25: "Dock available",
+  50: "Storage available",
+  60: "Hearth available",
+  70: "Flourishing"
+};
+
+export const QUEST_RENOWN_REWARDS = {
+  first_watch: { townId: "rivermoor", amount: 20 },
+  ashes_under_the_keep: { townId: "rivermoor", amount: 20 }
+};
+
+export const WARDEN_RENOWN_CONFIG = {
+  skeleton_warden: { townId: "rivermoor", amount: 20, cooldownMs: 10 * 60 * 1000, firstKillOnly: true }
+};
+
+// ========== RIVERMOOR PROJECT DONATIONS SYSTEM ==========
+// Each project requires specific items and gold. Donations drive tutorial progression.
+export const PROJECT_REQUIREMENTS = {
+  dock: {
+    items: { log: 40, iron_bar: 5 },
+    gold: 500
+  },
+  storage: {
+    items: { log: 60, iron_bar: 10 },
+    gold: 1000
+  },
+  hearth: {
+    items: { cooked_food: 15, crude_bar: 5 },
+    gold: 500
+  }
+};
+
+/**
+ * Check if an itemId matches a category requirement
+ * Categories: "cooked_food" matches any item starting with "cooked_"
+ */
+export function isItemInCategory(itemId, category) {
+  if (category === "cooked_food") {
+    return String(itemId).startsWith("cooked_");
+  }
+  // Direct match for specific items
+  return itemId === category;
+}
+// =========================================
+
 export const COOK_RECIPES = {
   rat_meat: { out: "cooked_rat_meat", xp: 12, verb: "cook some meat" },
   goldfish: { out: "goldfish_cracker", xp: 12, verb: "cook a gold fish cracker" },

@@ -6,6 +6,7 @@ export function createEntityLookup(deps) {
     if (idx !== -1) {
       const it = interactables[idx];
       if (it.type === "fire") return { kind: "fire", index: idx, label: "Campfire", x: it.x, y: it.y };
+      if (it.type === "cauldron") return { kind: "cauldron", index: idx, label: "Cauldron", x: it.x, y: it.y };
       if (it.type === "bank") return { kind: "bank", index: idx, label: "Bank Chest", x: it.x, y: it.y };
       if (it.type === "vendor") return { kind: "vendor", index: idx, label: "Vendor", x: it.x, y: it.y };
       if (it.type === "quest_npc") {
@@ -18,9 +19,19 @@ export function createEntityLookup(deps) {
           y: it.y
         };
       }
+      if (it.type === "project_npc") {
+        return {
+          kind: "project_npc",
+          index: idx,
+          label: it.name || "NPC",
+          npcId: String(it.npcId || ""),
+          x: it.x,
+          y: it.y
+        };
+      }
       if (it.type === "sealed_gate") return { kind: "sealed_gate", index: idx, label: (it.open ? "Unsealed Gate" : "Sealed Gate"), x: it.x, y: it.y, open: !!it.open };
       if (it.type === "brazier") return { kind: "brazier", index: idx, label: (it.lit ? "Lit Brazier" : "Dead Brazier"), x: it.x, y: it.y, lit: !!it.lit };
-      if (it.type === "fish") return { kind: "fish", index: idx, label: "Fishing Spot", x: it.x, y: it.y };
+      if (it.type === "fish" || it.type === "fish_dock") return { kind: "fish", index: idx, label: "Fishing Spot", x: it.x, y: it.y };
       if (it.type === "furnace") return { kind: "furnace", index: idx, label: "Furnace", x: it.x, y: it.y };
       if (it.type === "anvil") return { kind: "anvil", index: idx, label: "Anvil", x: it.x, y: it.y };
       if (it.type === "ladder_down") return { kind: "ladder_down", index: idx, label: "Ladder Down", x: it.x, y: it.y };

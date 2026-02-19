@@ -19,8 +19,48 @@ export const DECOR_EXAMINE_TEXT = {
   shop_lantern: "A lantern that helps customers find the door at night.",
   shop_bush: "A neatly trimmed bush that brightens the storefront.",
   shop_flower: "A patch of hardy flowers planted by the path.",
-  shop_rug: "A woven runner that guides customers to the counter."
+  shop_rug: "A woven runner that guides customers to the counter.",
+
+  dock_post_broken_1: "A weathered dock post, leaning slightly.",
+  dock_post_broken_2: "A salt-rotted support beam.",
+  dock_plank_broken: "Rotted dock planks, several boards missing.",
+
+  dock_post_repaired_1: "A solid dock post, recently reinforced.",
+  dock_post_repaired_2: "Heavy timbers supporting the platform.",
+  dock_plank_repaired: "Wooden dock planks, freshly laid.",
+
+  hearth_log: "A sturdy log set for a cozy camp.",
+  hearth_stool: "A simple wooden stool warmed by the fire.",
+  hearth_woodpile: "A neat stack of split firewood."
 };
+
+// Dock visual states (conditional on project completion)
+export const DOCK_DECOR_BROKEN = [
+  { id: "dock_post_broken_1", label: "Broken Post", x: 30, y: 22 },
+  { id: "dock_post_broken_2", label: "Broken Post", x: 32, y: 22 },
+  { id: "dock_plank_broken", label: "Broken Plank", x: 31, y: 22 }
+];
+
+export const DOCK_DECOR_REPAIRED = [
+  { id: "dock_post_repaired_1", label: "Dock Post", x: 30, y: 22 },
+  { id: "dock_post_repaired_2", label: "Dock Post", x: 32, y: 22 },
+  { id: "dock_plank_repaired", label: "Clean Plank", x: 31, y: 22 }
+];
+
+export function getDockDecorForState(dockComplete) {
+  return dockComplete ? DOCK_DECOR_REPAIRED : DOCK_DECOR_BROKEN;
+}
+
+export const HEARTH_DECOR_READY = [
+  { id: "hearth_log", label: "Camp Log", x: 3, y: 16 },
+  { id: "hearth_log", label: "Camp Log", x: 5, y: 16 },
+  { id: "hearth_stool", label: "Wooden Stool", x: 4, y: 17 },
+  { id: "hearth_woodpile", label: "Wood Pile", x: 6, y: 15 }
+];
+
+export function getHearthDecorForState(hearthComplete) {
+  return hearthComplete ? HEARTH_DECOR_READY : [];
+}
 
 function buildCastleDecorDefs(startCastle) {
   const x0 = startCastle.x0 | 0;
@@ -103,8 +143,13 @@ function carveManhattanPath(map, width, height, x0, y0, x1, y1) {
   }
 }
 
-export function createDecorLookup(startCastle, vendorShop) {
-  const defs = [...buildCastleDecorDefs(startCastle), ...buildShopDecorDefs(vendorShop)];
+export function createDecorLookup(startCastle, vendorShop, dockDecor = [], hearthDecor = []) {
+  const defs = [
+    ...buildCastleDecorDefs(startCastle),
+    ...buildShopDecorDefs(vendorShop),
+    ...dockDecor,
+    ...hearthDecor
+  ];
   const lookup = new Map();
   for (const d of defs) {
     const key = `${d.x},${d.y}`;

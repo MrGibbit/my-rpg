@@ -8,7 +8,6 @@ export function createCharacterUI(deps) {
     charColorPill,
     charStart,
     classPick,
-    startNewGameBtn,
     startNewCharacterBtn,
     loadCharOverlay,
     loadCharList,
@@ -34,6 +33,7 @@ export function createCharacterUI(deps) {
     openStartOverlay,
     startNewGame,
     resetCharacter,
+    showTownboardingModal,
     chatLine
   } = deps;
 
@@ -202,23 +202,6 @@ export function createCharacterUI(deps) {
     };
   }
 
-  if (startNewGameBtn) {
-    startNewGameBtn.onclick = () => {
-      const charProfile = getStoredCharacterProfile();
-      if (!charProfile) {
-        closeStartOverlay();
-        openCharCreate(true, true);
-        return;
-      }
-
-      applyCharacterProfileToPlayer(charProfile);
-
-      closeStartOverlay();
-      startNewGame();
-      chatLine(`<span class="good">Starting a new game for ${player.name} the ${player.class}.</span>`);
-    };
-  }
-
   if (startNewCharacterBtn) {
     startNewCharacterBtn.onclick = () => {
       closeStartOverlay();
@@ -241,7 +224,13 @@ export function createCharacterUI(deps) {
       closeStartOverlay();
       charOverlay.style.display = "none";
 
+      if (created?.id) {
+        player._hasSeenTownOnboarding = false;
+      }
       startNewGame();
+      if (typeof showTownboardingModal === "function") {
+        showTownboardingModal();
+      }
       chatLine(`<span class="good">Welcome, ${player.name} the ${player.class}.</span>`);
     };
   }

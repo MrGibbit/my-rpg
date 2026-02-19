@@ -1593,18 +1593,22 @@ function consumeFoodFromInv(invIndex){
 
   const renownGrants = {
     quests: {},     // { quest_id: true } - idempotent flags
+    questAmounts: {}, // { quest_id: amount } - amount granted so far
     wardens: {}     // { warden_key: { lastGrantedAt: <epoch_ms> } } - timestamp-based cooldown
   };
   let questRenownSnapshotMissing = false;
+  let questRenownNeedsReconcile = false;
 
   function resetRenownGrants() {
     renownGrants.quests = {};
+    renownGrants.questAmounts = {};
     renownGrants.wardens = {};
   }
 
   function getRenownGrantsSnapshot() {
     return {
       quests: { ...renownGrants.quests },
+      questAmounts: { ...renownGrants.questAmounts },
       wardens: { ...renownGrants.wardens }
     };
   }
@@ -1617,6 +1621,10 @@ function consumeFoodFromInv(invIndex){
     // Restore quest grants
     renownGrants.quests = (data.quests && typeof data.quests === "object") 
       ? { ...data.quests } 
+      : {};
+    // Restore quest amounts
+    renownGrants.questAmounts = (data.questAmounts && typeof data.questAmounts === "object")
+      ? { ...data.questAmounts }
       : {};
     // Restore warden timestamps
     renownGrants.wardens = (data.wardens && typeof data.wardens === "object") 
@@ -1631,21 +1639,29 @@ function consumeFoodFromInv(invIndex){
     const questId_str = String(questId || "");
     if (!questId_str) return false;
 
-    // Check if already granted
-    if (renownGrants.quests[questId_str]) {
-      return false; // Already granted, do nothing
-    }
-
-    // Look up reward config
     const rewardCfg = QUEST_RENOWN_REWARDS[questId_str];
     if (!rewardCfg) return false; // Unknown quest
 
+    const priorAmount = (renownGrants.questAmounts?.[questId_str] | 0);
+    const targetAmount = rewardCfg.amount | 0;
+    const delta = Math.max(0, targetAmount - priorAmount);
+
+    // Check if already granted
+    if (renownGrants.quests[questId_str] && delta <= 0) {
+      return false; // Already granted, do nothing
+    }
+
     // Mark as granted
     renownGrants.quests[questId_str] = true;
+    renownGrants.questAmounts[questId_str] = Math.max(targetAmount, priorAmount);
+
+    if (delta <= 0) return false;
 
     // Grant renown
-    const message = `Quest "${questId_str.replace(/_/g, " ")}" completed.`;
-    const success = grantTownRenown(rewardCfg.townId, rewardCfg.amount, message);
+    const message = priorAmount > 0
+      ? `Quest "${questId_str.replace(/_/g, " ")}" renown updated.`
+      : `Quest "${questId_str.replace(/_/g, " ")}" completed.`;
+    const success = grantTownRenown(rewardCfg.townId, delta, message);
 
     return success;
   }
@@ -1721,11 +1737,18 @@ function consumeFoodFromInv(invIndex){
     return getRenownGrantsSnapshot();
   }
   function applyQuestRenownSnapshot(data) {
-    const questBag = (data && typeof data === "object" && data.quests && typeof data.quests === "object")
-      ? data.quests
-      : null;
-    questRenownSnapshotMissing = !questBag || Object.keys(questBag).length === 0;
     applyRenownGrantsSnapshot(data);
+    const questBag = renownGrants.quests && typeof renownGrants.quests === "object" ? renownGrants.quests : null;
+    const questAmountsBag = renownGrants.questAmounts && typeof renownGrants.questAmounts === "object"
+      ? renownGrants.questAmounts
+      : null;
+    questRenownSnapshotMissing = !questBag || Object.keys(questBag).length === 0
+      || !questAmountsBag || Object.keys(questAmountsBag).length === 0;
+    questRenownNeedsReconcile = Object.entries(QUEST_RENOWN_REWARDS || {}).some(([questId, rewardCfg]) => {
+      const targetAmount = rewardCfg?.amount | 0;
+      const grantedAmount = questAmountsBag?.[questId] | 0;
+      return grantedAmount < targetAmount;
+    });
   }
   function getWardenDefeatSnapshot() {
     // Warden data is now integrated into renownGrants
@@ -1776,17 +1799,22 @@ function consumeFoodFromInv(invIndex){
   function grantRetroactiveQuestRenown() {
     const rewardKeys = Object.keys(QUEST_RENOWN_REWARDS || {});
     if (!rewardKeys.length) return;
+    let applied = false;
     for (const questId of rewardKeys) {
       if (isQuestCompleted(questId)) {
-        grantQuestRenown(questId);
+        applied = grantQuestRenown(questId) || applied;
       }
+    }
+    if (applied) {
+      chatLine("<span class=\"muted\">Rivermoor recognizes your past deeds. Renown has been updated.</span>");
     }
   }
 
   const applyQuestSnapshot = (data) => {
     _applyQuestSnapshot_original(data);
-    if (questRenownSnapshotMissing) {
+    if (questRenownSnapshotMissing || questRenownNeedsReconcile) {
       questRenownSnapshotMissing = false;
+      questRenownNeedsReconcile = false;
       grantRetroactiveQuestRenown();
     }
   };

@@ -3743,7 +3743,7 @@ function consumeFoodFromInv(invIndex){
     renderHPHUD();
   }
 
-  function forgeSmithingRecipe(barId, rec){
+  function forgeSmithingRecipe(barId, rec, continueAll = false){
     const barItem = Items[barId];
     const outId = rec?.out;
     const outItem = Items[outId];
@@ -3797,7 +3797,16 @@ function consumeFoodFromInv(invIndex){
         chatLine(`<span class="warn">Inventory full: ${outItem.name}</span> (+${xp} XP)`);
       }
       renderSmithingUI();
+
+      // If "Make All" is active, continue forging
+      if (continueAll && countInvQtyById(barId) >= needBars){
+        forgeSmithingRecipe(barId, rec, true);
+      }
     });
+  }
+
+  function forgeAllSmithingRecipe(barId, rec){
+    forgeSmithingRecipe(barId, rec, true);
   }
 
   function renderSmithingUI(){
@@ -3870,6 +3879,16 @@ function consumeFoodFromInv(invIndex){
         btn.disabled = !canForge;
         btn.onclick = () => forgeSmithingRecipe(barId, rec);
         actions.appendChild(btn);
+
+        // Add "Make All" button if we can afford multiple
+        const maxPossible = Math.floor(haveBars / needBars);
+        if (maxPossible > 1 && canForge){
+          const btnAll = document.createElement("button");
+          btnAll.className = "shopBtn";
+          btnAll.textContent = `Make All (${maxPossible})`;
+          btnAll.onclick = () => forgeAllSmithingRecipe(barId, rec);
+          actions.appendChild(btnAll);
+        }
 
         smithingListEl.appendChild(line);
       }

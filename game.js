@@ -3144,7 +3144,7 @@ function consumeFoodFromInv(invIndex){
     
     // Mass nouns and collective items that don't need pluralization
     if (itemName.endsWith("Food")) return itemName;
-    if (itemName.endsWith("fish")) return itemName; // fish → fish (not fishs)
+    if (itemName.toLowerCase().endsWith("fish")) return itemName; // fish → fish (not fishs)
     
     // Add 's' to most nouns for plural
     // Special cases: items ending in 'y' typically become 'ies'

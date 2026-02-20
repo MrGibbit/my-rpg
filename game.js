@@ -800,7 +800,6 @@ goldfish_cracker: {
   id:"goldfish_cracker",
   name:"Gold Fish Cracker",
   heal: 8,          // same as cooked rat meat
-  stack:true,
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="4" width="8" height="1" fill="rgb(40,22,16)"/>
     <rect x="4" y="11" width="8" height="1" fill="rgb(40,22,16)"/>

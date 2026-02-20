@@ -601,14 +601,16 @@ export function createActionResolver(deps) {
 
       if (player.action.type !== "idle") return;
 
-      const useCookable = (useState.activeItemId && COOK_RECIPES[useState.activeItemId] && hasItem(useState.activeItemId))
-        ? useState.activeItemId
-        : null;
-      const autoCookId = AUTO_COOK_ITEM_IDS.find((itemId) => COOK_RECIPES[itemId] && hasItem(itemId)) || null;
+      // On first interaction, store the priority item for the batch session
+      if (t._cookPriority === undefined) {
+        const priorityCookable = (useState.activeItemId && COOK_RECIPES[useState.activeItemId] && hasItem(useState.activeItemId))
+          ? useState.activeItemId
+          : null;
+        t._cookPriority = priorityCookable;
+      }
 
-      const cookId =
-        useCookable ||
-        autoCookId;
+      // Find next cookable, prioritizing the stored item
+      const cookId = findNextCookable(t._cookPriority);
 
       if (!cookId) {
         chatLine(`<span class="muted">The fire crackles.</span>`);
@@ -616,26 +618,43 @@ export function createActionResolver(deps) {
         return;
       }
 
+      // Show initial message only on first cook
+      if (!player._lastCookMsg) {
+        chatLine("You cook over the fire...");
+        player._lastCookMsg = true;
+      }
+
       const rec = COOK_RECIPES[cookId];
-      chatLine("You cook over the fire...");
       startTimedAction("cook", 1400, "Cooking...", () => {
-        if (!removeItemsFromInventory(cookId, 1)) {
-          chatLine(`<span class="warn">You need ${Items[cookId]?.name ?? cookId}.</span>`);
+        if (!hasItem(cookId)) {
+          chatLine(`<span class=\"warn\">You need ${Items[cookId]?.name ?? cookId}.</span>`);
+          stopAction();
           return;
         }
-
-        if (useState.activeItemId === cookId) setUseState(null);
-
-        const got = addToInventory(rec.out, 1);
-        emitQuestEvent({ type: "cook_any", inItemId: cookId, outItemId: rec.out, qty: 1 });
-        if (got === 1) {
-          addXP("cooking", rec.xp);
-          chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
-        } else {
-          addGroundLoot(player.x, player.y, rec.out, 1);
-          addXP("cooking", rec.xp);
-          chatLine(`<span class="warn">Inventory full: ${Items[rec.out].name}</span> (+${rec.xp} XP)`);
+        if (!convertCookedItem(cookId, rec.out)) {
+          chatLine(`<span class=\"warn\">Inventory full.</span>`);
+          stopAction();
+          return;
         }
+        emitQuestEvent({ type: "cook_any", inItemId: cookId, outItemId: rec.out, qty: 1 });
+        
+        addXP("cooking", rec.xp);
+        chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
+
+        // Check if we should continue batch cooking
+        if (!shouldContinueBatchCooking(cookId)) {
+          const nextCookable = findNextCookable(null);
+          if (!nextCookable) {
+            chatLine(`<span class="muted">You have no more raw food to cook.</span>`);
+          }
+          
+          // Clean up batch session
+          delete t._cookPriority;
+          player._lastCookMsg = false;
+          if (useState.activeItemId === cookId) setUseState(null);
+          stopAction();
+        }
+        // If shouldContinue, leave player.target set and the main loop will call us again
       });
 
       return;

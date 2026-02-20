@@ -3,65 +3,51 @@
 Use this file as the live notes while building.
 
 ## Current (Unreleased)
-- Version: `v0.4.7`
-- Date: `February 16, 2026`
-- Base comparison: `v0.4.4..HEAD` (`26 commits`)
+- Version: `v0.5.1`
+- Date: `February 19, 2026`
+- Base comparison: `v0.5.0..HEAD`
 
 ```md
-# Classic RPG - v0.4.7 (Draft)
+# Classic RPG - v0.5.1 (Draft)
 
-Compared to the last full GitHub release (`v0.4.4`), this release bundles all content and fixes currently on `main`.
+Compared to `v0.5.0`, this release focuses on usability, bank notes, and vendor improvements.
 
-## Major Additions Since v0.4.4
-- Full quest/journal system with progression tracking, rewards, and persistence.
-- New dungeon wing progression: sealed gate, brazier ritual flow, and Skeleton Warden boss lifecycle.
-- Equipment visual overhaul: shared visual rules, integrated armor rendering, and cleaner slot/prop behavior.
-- Blacksmith Torren + forge upgrade flow (including unlockable forge bank chest).
-- Warden's Brand upgrade (stat bump, undead passives, and dedicated equipped visuals).
-- Scalable bank capacity upgrades and fixed-size slot grids.
-- Fishing progression expansion with tiered catches and matching cooked outputs through late-game tiers.
+## Highlights
+- Added RuneScape-style bank notes (withdraw as notes toggle).
+- Replaced browser prompts with an in-game number modal.
+- Added smithing "Make All" to craft sequentially.
+- Improved vendor selling UX (Sell X + notes sellable).
+- Cooking now converts raw items directly into cooked items (no drops).
+- Game simulation continues when the tab is hidden (only pauses on start menu).
 
-## Combat and Progression
-- Added damage mitigation from armor on landed hits (not just miss chance).
-- Rebalanced early melee gear progression.
-- Added melee multi-train selection with split XP distribution.
-- Capped all skills at level `99`.
-- Switched combat level math to RuneScape-style scaling for clearer account power progression.
-- Tuned combat cadence and multiple encounter/aggro behaviors for dungeon reliability.
+## Bank and Inventory
+- Added bank notes toggle: withdraw items as notes that stack in inventory.
+- Noted items display as "(noted)" and cannot be used for crafting or equipping.
+- Notes can be deposited back to the bank and sold to vendors.
+- Bank stack names now pluralize (e.g., log/logs).
 
-## Skills and Gathering
-- Fishing now scales by level thresholds:
-  - `Lv 1` `goldfish`
-  - `Lv 10` `clownfish`
-  - `Lv 20` `pufferfish`
-  - `Lv 30` `catfish`
-  - `Lv 40` `swordfish`
-  - `Lv 55` `anglerfish`
-  - `Lv 70` `moonfish`
-  - `Lv 85` `chaos_koi`
-- Added cooking outputs/XP entries for all new fish tiers.
-- Added smarter auto-cook fallback to prefer the highest available cookable fish/meat in inventory.
+## Smithing
+- Added "Make All" next to Forge, crafting one item at a time (like cooking).
+- Prevented objective UI drag overrides from repositioning during drag.
 
-## Quests, Dungeon, and World Stability
-- Added `first_watch` and `ashes_under_the_keep` questline support and objective hooks.
-- Improved Skeleton Warden encounter behavior (aggro floor, room coverage, and cleanup behavior).
-- Fixed dungeon mob respawn-home and roam recovery issues.
-- Fixed dungeon death respawn routing back to the overworld castle.
-- Added migration for older world/resource layouts and stale-client compatibility safeguards.
+## Vendor
+- Added Sell X for the vendor sell tab.
+- Fire Staff is sellable for 150g (vendor only; not buyable).
 
-## UI, UX, and Technical
-- Expanded test coverage with smoke and quest regression suites.
-- Extended debug API quest/item helpers used by automated tests.
-- Added import-target validation scripts/workflow hardening.
-- Added repo hygiene updates (`.gitignore` cleanup and local log/test artifact ignores).
-- Applied broad refactors to split monolithic gameplay/UI logic into dedicated modules under `src/`.
+## UI and UX
+- Added in-game number modal for Deposit X / Withdraw X / Drop X / Sell X / Move Arrows X.
+- Objective card now appears consistently and remains draggable without snapping back.
+- Startup chat is consolidated and less spammy.
+- Hearth decor adjusted: added a second stool at the cauldron area.
 
-## Economy and Inventory Fixes
-- Fixed inventory/bank stacking consistency for identical items.
-- Fixed crude weapon stack handling in bank.
-- Allowed vendors to buy smithing-crafted items.
-- Corrected wall-clock timestamp save behavior.
-- Cleaned tooltip bullet rendering issues.
+## Performance
+- Optimized dungeon torch rendering to reduce canvas state changes.
+
+## Cooking
+- Cauldron cooking continues like campfire cooking.
+- Raw items now convert into cooked items in inventory (no ground drops).
+- Raw and cooked fish/food no longer stack in inventory (each takes one slot).
+- Fish and cooked food still stack normally when deposited in the bank.
 ```
 
 ## Posted

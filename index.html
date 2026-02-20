@@ -16,7 +16,7 @@
   })();
 </script>
 
-<link rel="stylesheet" href="style.css?v=0.4.6.1">
+<link rel="stylesheet" href="style.css?v=0.4.6.2">
 
 
 </head>
@@ -49,6 +49,17 @@
 </div>
 
         </div>
+      </div>
+    </div>
+
+    <div class="objectiveCard" id="objectiveCard" aria-live="polite">
+      <div class="objectiveHeader" id="objectiveHeader" title="Drag to move">
+        <div class="objectiveTitle" id="objectiveDragHandle">Current Objective</div>
+        <button type="button" class="objectiveCollapseBtn" id="objectiveCollapseBtn" aria-label="Collapse objective card" title="Collapse">−</button>
+      </div>
+      <div class="objectiveBody" id="objectiveBody">
+        <div class="objectiveText" id="objectiveText">Follow your first quest from the Quartermaster.</div>
+        <div class="objectiveHint" id="objectiveHint">Tip: open Quests with the quest icon.</div>
       </div>
     </div>
 
@@ -587,7 +598,7 @@
 </div>
 <audio id="bgm" src="assets/bgm.mp3" loop preload="auto"></audio>
 
-<script type="module" src="game.js?v=0.4.20"></script>
+<script type="module" src="game.js?v=0.4.21"></script>
 
 
 </body>

@@ -262,6 +262,28 @@ export function createActionResolver(deps) {
     stopIfInventoryFull("Inventory full.");
   }
 
+  function convertCookedItem(cookId, outId) {
+    const rawItem = Items[cookId];
+    const cookedItem = Items[outId];
+    if (!rawItem || !cookedItem) return false;
+
+    const idx = inv.findIndex((s) => s && s.id === cookId);
+    if (idx < 0) return false;
+
+    const slot = inv[idx];
+    const qty = Math.max(1, slot.qty | 0);
+    if (qty > 1) {
+      const empty = inv.findIndex((s) => !s);
+      if (empty < 0) return false;
+      inv[idx] = { id: cookId, qty: qty - 1 };
+      inv[empty] = { id: outId, qty: 1 };
+    } else {
+      inv[idx] = { id: outId, qty: 1 };
+    }
+    renderInv();
+    return true;
+  }
+
   function startGatherAction(config) {
     const {
       actionType,
@@ -303,10 +325,6 @@ export function createActionResolver(deps) {
     // Find another cookable item
     const nextCookable = findNextCookable(null);
     if (!nextCookable) return false;
-
-    // Make sure we have inventory space (at least one slot)
-    if (emptyInvSlots() <= 0) return false;
-
     return true;
   }
 
@@ -665,35 +683,26 @@ export function createActionResolver(deps) {
 
       const rec = COOK_RECIPES[cookId];
       startTimedAction("cook", 1400, "Cooking...", () => {
-        if (!removeItemsFromInventory(cookId, 1)) {
+        if (!hasItem(cookId)) {
           chatLine(`<span class=\"warn\">You need ${Items[cookId]?.name ?? cookId}.</span>`);
           stopAction();
           return;
         }
-
-        const got = addToInventory(rec.out, 1);
+        if (!convertCookedItem(cookId, rec.out)) {
+          chatLine(`<span class=\"warn\">Inventory full.</span>`);
+          stopAction();
+          return;
+        }
         emitQuestEvent({ type: "cook_any", inItemId: cookId, outItemId: rec.out, qty: 1 });
         
-        if (got === 1) {
-          addXP("cooking", rec.xp);
-          chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
-        } else {
-          addGroundLoot(player.x, player.y, rec.out, 1);
-          addXP("cooking", rec.xp);
-          chatLine(`<span class="warn">Inventory full: ${Items[rec.out].name}</span> (+${rec.xp} XP)`);
-        }
+        addXP("cooking", rec.xp);
+        chatLine(`<span class="good">You ${rec.verb}.</span> (+${rec.xp} XP)`);
 
         // Check if we should continue batch cooking
         if (!shouldContinueBatchCooking(cookId)) {
-          // Determine why we're stopping
-          const emptySlots = emptyInvSlots();
-          if (emptySlots <= 0) {
-            chatLine(`<span class="warn">You don't have enough inventory space.</span>`);
-          } else {
-            const nextCookable = findNextCookable(null);
-            if (!nextCookable) {
-              chatLine(`<span class="muted">You have no more raw food to cook.</span>`);
-            }
+          const nextCookable = findNextCookable(null);
+          if (!nextCookable) {
+            chatLine(`<span class="muted">You have no more raw food to cook.</span>`);
           }
           
           // Clean up batch session

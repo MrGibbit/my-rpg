@@ -45,6 +45,13 @@ export function attachInventoryInputHandlers(deps) {
       return;
     }
 
+    if (useState.activeItemId) {
+      const toolId = useState.activeItemId;
+      if (!inv.some((slot) => slot && slot.id === toolId)) {
+        setUseState(null);
+      }
+    }
+
     if (consumeFoodFromInv(idx)) return;
 
     if (useState.activeItemId) {

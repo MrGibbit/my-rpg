@@ -754,6 +754,7 @@ function levelStrokeForCls(cls){
       id:"cooked_rat_meat",
       name:"Cooked Rat Meat",
       heal: 8,
+      stack: false,
       icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
         <!-- outline -->
         <rect x="4" y="4" width="8" height="1" fill="rgb(40,22,16)"/>
@@ -779,7 +780,7 @@ goldfish: {
   id:"goldfish",
   name:"Gold Fish",
   heal: 2,          // same as raw rat meat
-  stack:true,
+  stack:false,
   req:{ fishing:1 },
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="6" width="7" height="1" fill="rgb(40,22,16)"/>
@@ -800,6 +801,7 @@ goldfish_cracker: {
   id:"goldfish_cracker",
   name:"Gold Fish Cracker",
   heal: 8,          // same as cooked rat meat
+  stack: false,
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="4" width="8" height="1" fill="rgb(40,22,16)"/>
     <rect x="4" y="11" width="8" height="1" fill="rgb(40,22,16)"/>
@@ -817,7 +819,7 @@ clownfish: {
   id:"clownfish",
   name:"Clownfish",
   heal: 4,
-  stack:true,
+  stack:false,
   req:{ fishing:10 },
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="6" width="7" height="1" fill="rgb(40,22,16)"/>
@@ -838,6 +840,7 @@ cooked_clownfish: {
   id:"cooked_clownfish",
   name:"Cooked Clownfish",
   heal: 12,
+  stack: false,
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="6" width="7" height="1" fill="rgb(40,22,16)"/>
     <rect x="3" y="7" width="1" height="2" fill="rgb(40,22,16)"/>
@@ -860,7 +863,7 @@ pufferfish: {
   id:"pufferfish",
   name:"Pufferfish",
   heal: 6,
-  stack:true,
+  stack:false,
   req:{ fishing:20 },
   icon: fishIcon("rgb(234,179,8)", "rgb(253,224,71)", "rgb(168,85,247)")
 },
@@ -869,6 +872,7 @@ cooked_pufferfish: {
   id:"cooked_pufferfish",
   name:"Cooked Pufferfish",
   heal: 16,
+  stack: false,
   icon: cookedFishIcon("rgb(158,94,46)", "rgb(201,124,62)")
 },
 
@@ -876,7 +880,7 @@ catfish: {
   id:"catfish",
   name:"Catfish",
   heal: 8,
-  stack:true,
+  stack:false,
   req:{ fishing:30 },
   icon: fishIcon("rgb(100,116,139)", "rgb(148,163,184)", "rgb(30,64,175)")
 },
@@ -885,6 +889,7 @@ cooked_catfish: {
   id:"cooked_catfish",
   name:"Cooked Catfish",
   heal: 20,
+  stack: false,
   icon: cookedFishIcon("rgb(128,74,40)", "rgb(166,98,52)")
 },
 
@@ -892,7 +897,7 @@ swordfish: {
   id:"swordfish",
   name:"Swordfish",
   heal: 10,
-  stack:true,
+  stack:false,
   req:{ fishing:40 },
   icon: fishIcon("rgb(14,116,144)", "rgb(125,211,252)", "rgb(56,189,248)")
 },
@@ -901,6 +906,7 @@ cooked_swordfish: {
   id:"cooked_swordfish",
   name:"Cooked Swordfish",
   heal: 24,
+  stack: false,
   icon: cookedFishIcon("rgb(170,88,48)", "rgb(212,120,62)")
 },
 
@@ -908,7 +914,7 @@ anglerfish: {
   id:"anglerfish",
   name:"Anglerfish",
   heal: 12,
-  stack:true,
+  stack:false,
   req:{ fishing:55 },
   icon: fishIcon("rgb(82,82,91)", "rgb(161,161,170)", "rgb(234,88,12)")
 },
@@ -917,6 +923,7 @@ cooked_anglerfish: {
   id:"cooked_anglerfish",
   name:"Cooked Anglerfish",
   heal: 30,
+  stack: false,
   icon: cookedFishIcon("rgb(156,82,36)", "rgb(194,108,50)")
 },
 
@@ -924,7 +931,7 @@ moonfish: {
   id:"moonfish",
   name:"Moonfish",
   heal: 14,
-  stack:true,
+  stack:false,
   req:{ fishing:70 },
   icon: fishIcon("rgb(99,102,241)", "rgb(196,181,253)", "rgb(168,85,247)")
 },
@@ -933,6 +940,7 @@ cooked_moonfish: {
   id:"cooked_moonfish",
   name:"Cooked Moonfish",
   heal: 36,
+  stack: false,
   icon: cookedFishIcon("rgb(148,78,44)", "rgb(188,110,60)")
 },
 
@@ -940,7 +948,7 @@ chaos_koi: {
   id:"chaos_koi",
   name:"Chaos Koi",
   heal: 16,
-  stack:true,
+  stack:false,
   req:{ fishing:80 },
   icon: fishIcon("rgb(220,38,38)", "rgb(251,146,60)", "rgb(250,204,21)")
 },
@@ -949,6 +957,7 @@ cooked_chaos_koi: {
   id:"cooked_chaos_koi",
   name:"Cooked Chaos Koi",
   heal: 44,
+  stack: false,
   icon: cookedFishIcon("rgb(176,72,34)", "rgb(222,106,46)")
 },
 
@@ -956,6 +965,7 @@ cooked_food: {
   id:"cooked_food",
   name:"Cooked Food",
   heal: 8,
+  stack: false,
   icon: cookedFishIcon("rgb(146,78,38)", "rgb(180,102,48)")
 },
 

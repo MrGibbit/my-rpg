@@ -2620,6 +2620,7 @@ function consumeFoodFromInv(invIndex){
         if (e.button !== 0) return;
         if (e.target.closest("button,input,textarea,select,a")) return;
         e.preventDefault();
+        e.stopPropagation();
         const rect = objectiveCard.getBoundingClientRect();
         objectiveDrag = {
           dx: e.clientX - rect.left,

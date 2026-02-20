@@ -2448,6 +2448,7 @@ function consumeFoodFromInv(invIndex){
 
     objectiveHint.style.display = state.hint ? "block" : "none";
     objectiveCard.classList.remove("isHidden");
+    placeObjectiveAtHudAnchor();
     syncObjectiveCollapseUI();
   }
 

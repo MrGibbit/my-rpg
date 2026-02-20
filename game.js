@@ -3677,13 +3677,15 @@ function consumeFoodFromInv(invIndex){
       } else {
         const item = Items[s.id];
         const qty = (s.qty|0) || 1;
+        const baseName = item?.name ?? s.id;
+        const displayName = pluralizeItemName(baseName, qty);
         slot.innerHTML = `
           <div class="icon">${item?.flatIcon ?? item?.icon ?? UNKNOWN_ICON}</div>
-          <div class="name">${item?.name ?? s.id}</div>
+          <div class="name">${displayName}</div>
           ${qty>1 ? `<div class="qty">${qty}</div>` : ``}
         `;
         const stats = getItemCombatStatText(s.id);
-        const tip = `${item?.name ?? s.id}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
+        const tip = `${displayName}${qty>1 ? ` x${qty}` : ""}${stats ? `\n${stats}` : ""}`;
         slot.removeAttribute("title");
         slot.dataset.tooltip = tip;
       }

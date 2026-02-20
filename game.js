@@ -754,8 +754,6 @@ function levelStrokeForCls(cls){
       id:"cooked_rat_meat",
       name:"Cooked Rat Meat",
       heal: 8,
-
-      stack:true,
       icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" aria-hidden="true" focusable="false" style="display:block">
         <!-- outline -->
         <rect x="4" y="4" width="8" height="1" fill="rgb(40,22,16)"/>
@@ -841,7 +839,6 @@ cooked_clownfish: {
   id:"cooked_clownfish",
   name:"Cooked Clownfish",
   heal: 12,
-  stack:true,
   icon:`<svg width="20" height="20" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">
     <rect x="4" y="6" width="7" height="1" fill="rgb(40,22,16)"/>
     <rect x="3" y="7" width="1" height="2" fill="rgb(40,22,16)"/>
@@ -873,7 +870,6 @@ cooked_pufferfish: {
   id:"cooked_pufferfish",
   name:"Cooked Pufferfish",
   heal: 16,
-  stack:true,
   icon: cookedFishIcon("rgb(158,94,46)", "rgb(201,124,62)")
 },
 
@@ -890,7 +886,6 @@ cooked_catfish: {
   id:"cooked_catfish",
   name:"Cooked Catfish",
   heal: 20,
-  stack:true,
   icon: cookedFishIcon("rgb(128,74,40)", "rgb(166,98,52)")
 },
 
@@ -907,7 +902,6 @@ cooked_swordfish: {
   id:"cooked_swordfish",
   name:"Cooked Swordfish",
   heal: 24,
-  stack:true,
   icon: cookedFishIcon("rgb(170,88,48)", "rgb(212,120,62)")
 },
 
@@ -924,7 +918,6 @@ cooked_anglerfish: {
   id:"cooked_anglerfish",
   name:"Cooked Anglerfish",
   heal: 30,
-  stack:true,
   icon: cookedFishIcon("rgb(156,82,36)", "rgb(194,108,50)")
 },
 
@@ -941,7 +934,6 @@ cooked_moonfish: {
   id:"cooked_moonfish",
   name:"Cooked Moonfish",
   heal: 36,
-  stack:true,
   icon: cookedFishIcon("rgb(148,78,44)", "rgb(188,110,60)")
 },
 
@@ -958,7 +950,6 @@ cooked_chaos_koi: {
   id:"cooked_chaos_koi",
   name:"Cooked Chaos Koi",
   heal: 44,
-  stack:true,
   icon: cookedFishIcon("rgb(176,72,34)", "rgb(222,106,46)")
 },
 
@@ -966,7 +957,6 @@ cooked_food: {
   id:"cooked_food",
   name:"Cooked Food",
   heal: 8,
-  stack:true,
   icon: cookedFishIcon("rgb(146,78,38)", "rgb(180,102,48)")
 },
 

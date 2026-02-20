@@ -247,7 +247,8 @@ export const DEFAULT_VENDOR_SELL_ONLY_PRICES = {
   iron_helm: 28,
   iron_legs: 34,
   iron_body: 52,
-  bone_meal: 8
+  bone_meal: 8,
+  fire_staff: 300
 };
 
 export const DEFAULT_MOB_LEVELS = {

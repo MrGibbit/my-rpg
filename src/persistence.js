@@ -66,12 +66,146 @@ export function createPersistence(deps) {
   const DUNGEON_ZONE = "dungeon";
   const ZONE_ORDER = [OVERWORLD_ZONE, DUNGEON_ZONE];
   const DEFAULT_BANK_CAPACITY = Math.max(1, (BANK_START_SLOTS | 0) || 14);
-	  const RESOURCE_LAYOUT_VERSION = 2;
+  const RESOURCE_LAYOUT_VERSION = 2;
   const EQUIP_SLOTS = ["weapon", "offhand", "head", "body", "legs", "hands", "feet"];
+  const WALKABLE_TILES = new Set([0, 3, 5]);
+  let lastLoadRepairReport = {
+    ok: false,
+    repaired: false,
+    reasons: [],
+    timestamp: 0
+  };
+
+    function warnLoadIssue(message, err) {
+      if (err) {
+        console.warn(`[persistence] ${message}`, err);
+        return;
+      }
+      console.warn(`[persistence] ${message}`);
+    }
+
+    function parseSavePayload(raw) {
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw;
+      if (typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : null;
+      } catch (err) {
+        warnLoadIssue("Failed to parse save payload.", err);
+        return null;
+      }
+    }
 
   function getKnownZoneKeys() {
     if (typeof getZoneState !== "function") return [OVERWORLD_ZONE];
     return ZONE_ORDER.filter((zoneKey) => !!getZoneState(zoneKey));
+  }
+
+  function finalizeLoadRepairReport(ok, reasons) {
+    const uniqueReasons = Array.from(new Set((Array.isArray(reasons) ? reasons : []).filter(Boolean)));
+    lastLoadRepairReport = {
+      ok: !!ok,
+      repaired: uniqueReasons.length > 0,
+      reasons: uniqueReasons,
+      timestamp: Date.now()
+    };
+    if (lastLoadRepairReport.repaired) {
+      warnLoadIssue(`Save normalized: ${uniqueReasons.join(", ")}`);
+    }
+    return lastLoadRepairReport;
+  }
+
+  function getLastLoadRepairReport() {
+    return {
+      ok: !!lastLoadRepairReport.ok,
+      repaired: !!lastLoadRepairReport.repaired,
+      reasons: [...(lastLoadRepairReport.reasons || [])],
+      timestamp: Number.isFinite(lastLoadRepairReport.timestamp) ? lastLoadRepairReport.timestamp : 0
+    };
+  }
+
+  function toFiniteInt(value, fallback = 0) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback | 0;
+    return num | 0;
+  }
+
+  function clampInt(value, min, max) {
+    const lo = Math.min(min | 0, max | 0);
+    const hi = Math.max(min | 0, max | 0);
+    return Math.max(lo, Math.min(hi, toFiniteInt(value, lo)));
+  }
+
+  function inBoundsRuntime(runtime, x, y) {
+    return x >= 0 && y >= 0 && x < (runtime.width | 0) && y < (runtime.height | 0);
+  }
+
+  function isWalkableRuntime(runtime, x, y) {
+    if (!inBoundsRuntime(runtime, x, y)) return false;
+    const mapRef = runtime.map;
+    const row = Array.isArray(mapRef) ? mapRef[y] : null;
+    if (!Array.isArray(row)) return false;
+    return WALKABLE_TILES.has(row[x]);
+  }
+
+  function firstWalkableTile(runtime) {
+    const width = runtime.width | 0;
+    const height = runtime.height | 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (isWalkableRuntime(runtime, x, y)) return { x, y };
+      }
+    }
+    return null;
+  }
+
+  function findNearestWalkableTile(runtime, startX, startY) {
+    const width = runtime.width | 0;
+    const height = runtime.height | 0;
+    if (width <= 0 || height <= 0) return null;
+
+    const cx = clampInt(startX, 0, Math.max(0, width - 1));
+    const cy = clampInt(startY, 0, Math.max(0, height - 1));
+    if (isWalkableRuntime(runtime, cx, cy)) return { x: cx, y: cy };
+
+    const maxRadius = Math.max(width, height);
+    for (let radius = 1; radius <= maxRadius; radius++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        const y = cy + dy;
+        if (y < 0 || y >= height) continue;
+
+        const leftX = cx - radius;
+        const rightX = cx + radius;
+        if (leftX >= 0 && isWalkableRuntime(runtime, leftX, y)) return { x: leftX, y };
+        if (rightX < width && isWalkableRuntime(runtime, rightX, y)) return { x: rightX, y };
+      }
+
+      for (let dx = -radius + 1; dx <= radius - 1; dx++) {
+        const x = cx + dx;
+        if (x < 0 || x >= width) continue;
+
+        const topY = cy - radius;
+        const bottomY = cy + radius;
+        if (topY >= 0 && isWalkableRuntime(runtime, x, topY)) return { x, y: topY };
+        if (bottomY < height && isWalkableRuntime(runtime, x, bottomY)) return { x, y: bottomY };
+      }
+    }
+
+    return firstWalkableTile(runtime);
+  }
+
+  function normalizePlayerPosition(zoneKey, x, y) {
+    const runtime = getZoneRuntime(zoneKey);
+    const safe = findNearestWalkableTile(runtime, x, y);
+    if (safe) return safe;
+
+    if (zoneKey !== OVERWORLD_ZONE) {
+      const overworldRuntime = getZoneRuntime(OVERWORLD_ZONE);
+      const overworldSafe = firstWalkableTile(overworldRuntime);
+      if (overworldSafe) return overworldSafe;
+    }
+
+    return { x: 1, y: 1 };
   }
 
   function getZoneRuntime(zoneKey) {
@@ -243,7 +377,9 @@ export function createPersistence(deps) {
       pile.createdAt = t0;
       pile.expiresAt = t0 + Math.max(0, expiresIn);
 
-      for (const [id, qty] of entries) {
+      for (const entry of entries) {
+        if (!Array.isArray(entry) || entry.length < 2) continue;
+        const [id, qty] = entry;
         if (!Items[id]) continue;
         pile.set(id, Math.max(0, qty | 0));
       }
@@ -527,116 +663,197 @@ export function createPersistence(deps) {
   }
 
   function deserialize(str) {
-    const data = JSON.parse(str);
-    const t0 = now();
-    const savedResourceLayoutV = Number.isFinite(data?.resourceLayoutV) ? (data.resourceLayoutV | 0) : 0;
-    const forceOverworldResourceReseed = (savedResourceLayoutV !== RESOURCE_LAYOUT_VERSION);
-
-    if (typeof applyWorldUpgradeSnapshot === "function") {
-      applyWorldUpgradeSnapshot(data?.worldUpgrades ?? null);
+    const repairReasons = [];
+    const data = parseSavePayload(str);
+    if (!data) {
+      repairReasons.push("invalid_payload");
+      finalizeLoadRepairReport(false, repairReasons);
+      return false;
     }
 
-    if (typeof applyTownRenownSnapshot === "function") {
-      applyTownRenownSnapshot(data?.towns ?? null);
-    }
+    try {
+      const prevZone = normalizeZoneKey(typeof getActiveZone === "function" ? getActiveZone() : OVERWORLD_ZONE);
+      const prevX = toFiniteInt(player?.x, 1);
+      const prevY = toFiniteInt(player?.y, 1);
+      const t0 = now();
+      const savedResourceLayoutV = Number.isFinite(data?.resourceLayoutV) ? (data.resourceLayoutV | 0) : 0;
+      const forceOverworldResourceReseed = (savedResourceLayoutV !== RESOURCE_LAYOUT_VERSION);
 
-    if (typeof applyQuestRenownSnapshot === "function") {
-      applyQuestRenownSnapshot(data?.questRenown ?? null);
-    }
+      if (typeof applyWorldUpgradeSnapshot === "function") {
+        applyWorldUpgradeSnapshot(data?.worldUpgrades ?? null);
+      }
 
-    if (typeof applyWardenDefeatSnapshot === "function") {
-      applyWardenDefeatSnapshot(data?.wardenDefeat ?? null);
-    }
+      if (typeof applyTownRenownSnapshot === "function") {
+        applyTownRenownSnapshot(data?.towns ?? null);
+      }
 
-    if (typeof applyProjectSnapshot === "function") {
-      applyProjectSnapshot(data?.projects ?? null);
-    }
+      if (typeof applyQuestRenownSnapshot === "function") {
+        applyQuestRenownSnapshot(data?.questRenown ?? null);
+      }
 
-    if (data?.player) {
-      player.x = data.player.x | 0;
-      player.y = data.player.y | 0;
-      player.name = String(data.player.name || player.name).slice(0, 14);
+      if (typeof applyWardenDefeatSnapshot === "function") {
+        applyWardenDefeatSnapshot(data?.wardenDefeat ?? null);
+      }
 
-      const cls = data.player.class;
-      player.class = (cls && CLASS_DEFS[cls]) ? cls : (player.class || "Warrior");
-      player.color = data.player.color || (CLASS_DEFS[player.class]?.color ?? player.color);
-      player.maxHp = (data.player.maxHp | 0) || player.maxHp;
-      player.hp = (data.player.hp | 0) || player.maxHp;
+      if (typeof applyProjectSnapshot === "function") {
+        applyProjectSnapshot(data?.projects ?? null);
+      }
 
+      if (data?.player) {
+        const rawX = data.player.x;
+        const rawY = data.player.y;
+        const rawMaxHp = data.player.maxHp;
+        const rawHp = data.player.hp;
+
+        player.x = toFiniteInt(rawX, prevX);
+        player.y = toFiniteInt(rawY, prevY);
+        player.name = String(data.player.name || player.name).slice(0, 14);
+
+        if (!Number.isFinite(Number(rawX)) || !Number.isFinite(Number(rawY))) {
+          repairReasons.push("player_position_invalid");
+        }
+
+        const cls = data.player.class;
+        player.class = (cls && CLASS_DEFS[cls]) ? cls : (player.class || "Warrior");
+        player.color = data.player.color || (CLASS_DEFS[player.class]?.color ?? player.color);
+
+        const maxHpCandidate = clampInt(rawMaxHp, 1, 9999);
+        if (maxHpCandidate !== toFiniteInt(rawMaxHp, maxHpCandidate)) {
+          repairReasons.push("player_maxhp_clamped");
+        }
+        player.maxHp = maxHpCandidate || player.maxHp;
+
+        const hpCandidate = clampInt(rawHp, 0, player.maxHp);
+        if (hpCandidate !== toFiniteInt(rawHp, hpCandidate)) {
+          repairReasons.push("player_hp_clamped");
+        }
+        player.hp = hpCandidate;
+
+        syncPlayerPix();
+        player.path = [];
+        player.target = null;
+        player.action = { type: "idle", endsAt: 0, total: 0, label: "Idle", onComplete: null };
+      } else {
+        repairReasons.push("missing_player_data");
+        player.x = prevX;
+        player.y = prevY;
+      }
+
+      const zonesFromSave = (data?.zones && typeof data.zones === "object") ? data.zones : null;
+      const legacyOverworldZone = {
+        world: data?.world,
+        groundLoot: data?.groundLoot,
+        legacyGroundLoot: data?.groundLoot
+      };
+
+      for (const zoneKey of getKnownZoneKeys()) {
+        const zonePayload = zonesFromSave?.[zoneKey] ?? (zoneKey === OVERWORLD_ZONE ? legacyOverworldZone : null);
+        restoreWorldForZone(zoneKey, zonePayload, t0, {
+          forceReseedResources: (zoneKey === OVERWORLD_ZONE && forceOverworldResourceReseed)
+        });
+      }
+
+      const rawActiveZone = String(data?.activeZone || "");
+      const activeZone = normalizeZoneKey(data?.activeZone);
+      if (rawActiveZone && rawActiveZone !== activeZone) {
+        repairReasons.push("active_zone_fallback");
+      }
+      if (typeof setActiveZone === "function") {
+        const prev = (typeof getActiveZone === "function")
+          ? normalizeZoneKey(getActiveZone())
+          : OVERWORLD_ZONE;
+        setActiveZone(activeZone);
+        if (prev !== activeZone && typeof onZoneChanged === "function") onZoneChanged(activeZone, prev);
+      }
+      if (worldState && typeof worldState === "object") {
+        worldState.activeZone = activeZone;
+      }
+
+      const beforeSafeX = player.x | 0;
+      const beforeSafeY = player.y | 0;
+      const safePlayerPos = normalizePlayerPosition(activeZone, player.x, player.y)
+        || normalizePlayerPosition(prevZone, prevX, prevY)
+        || { x: 1, y: 1 };
+      player.x = safePlayerPos.x | 0;
+      player.y = safePlayerPos.y | 0;
+      if (player.x !== beforeSafeX || player.y !== beforeSafeY) {
+        repairReasons.push("player_position_repositioned");
+      }
       syncPlayerPix();
-      player.path = [];
-      player.target = null;
-      player.action = { type: "idle", endsAt: 0, total: 0, label: "Idle", onComplete: null };
-    }
 
-    const zonesFromSave = (data?.zones && typeof data.zones === "object") ? data.zones : null;
-    const legacyOverworldZone = {
-      world: data?.world,
-      groundLoot: data?.groundLoot,
-      legacyGroundLoot: data?.groundLoot
-    };
+      restoreSkillsFromSave(data);
 
-    for (const zoneKey of getKnownZoneKeys()) {
-      const zonePayload = zonesFromSave?.[zoneKey] ?? (zoneKey === OVERWORLD_ZONE ? legacyOverworldZone : null);
-      restoreWorldForZone(zoneKey, zonePayload, t0, {
-        forceReseedResources: (zoneKey === OVERWORLD_ZONE && forceOverworldResourceReseed)
-      });
-    }
+      recalcMaxHPFromHealth();
+      const hpAfterRecalc = clamp(player.hp, 0, player.maxHp);
+      if (hpAfterRecalc !== player.hp) {
+        repairReasons.push("player_hp_post_recalc_clamped");
+      }
+      player.hp = hpAfterRecalc;
 
-    const activeZone = normalizeZoneKey(data?.activeZone);
-    if (typeof setActiveZone === "function") {
-      const prev = (typeof getActiveZone === "function")
-        ? normalizeZoneKey(getActiveZone())
-        : OVERWORLD_ZONE;
-      setActiveZone(activeZone);
-      if (prev !== activeZone && typeof onZoneChanged === "function") onZoneChanged(activeZone, prev);
-    }
-    if (worldState && typeof worldState === "object") {
-      worldState.activeZone = activeZone;
-    }
+      quiver.wooden_arrow = 0;
+      if (data?.quiver && Object.prototype.hasOwnProperty.call(data.quiver, "wooden_arrow")) {
+        const rawArrows = data.quiver.wooden_arrow;
+        const fixedArrows = Math.max(0, toFiniteInt(rawArrows, 0));
+        if (fixedArrows !== toFiniteInt(rawArrows, fixedArrows)) {
+          repairReasons.push("quiver_clamped");
+        }
+        quiver.wooden_arrow = fixedArrows;
+      }
 
-    restoreSkillsFromSave(data);
+      wallet.gold = 0;
+      if (data?.wallet && Object.prototype.hasOwnProperty.call(data.wallet, "gold")) {
+        const rawGold = data.wallet.gold;
+        const fixedGold = Math.max(0, toFiniteInt(rawGold, 0));
+        if (fixedGold !== toFiniteInt(rawGold, fixedGold)) {
+          repairReasons.push("wallet_gold_clamped");
+        }
+        wallet.gold = fixedGold;
+      }
 
-    recalcMaxHPFromHealth();
-    player.hp = clamp(player.hp, 0, player.maxHp);
+      restoreInventoryFromSave(data);
+      const restoredBankSlots = restoreBankFromSave(data);
+      if (typeof setBankCapacity === "function") {
+        const savedCapacity = (typeof data?.bankCapacity === "number" && Number.isFinite(data.bankCapacity))
+          ? (data.bankCapacity | 0)
+          : ((typeof getBankCapacity === "function") ? (getBankCapacity() | 0) : DEFAULT_BANK_CAPACITY);
+        const desiredCapacity = Math.max(savedCapacity, restoredBankSlots);
+        const fixedCapacity = Math.max(1, Math.min(MAX_BANK, desiredCapacity));
+        if (fixedCapacity !== desiredCapacity) {
+          repairReasons.push("bank_capacity_clamped");
+        }
+        setBankCapacity(fixedCapacity, { silent: true });
+      }
 
-    quiver.wooden_arrow = 0;
-    if (data?.quiver && typeof data.quiver.wooden_arrow === "number") {
-      quiver.wooden_arrow = Math.max(0, data.quiver.wooden_arrow | 0);
-    }
-
-    wallet.gold = 0;
-    if (data?.wallet && typeof data.wallet.gold === "number") {
-      wallet.gold = Math.max(0, data.wallet.gold | 0);
-    }
-
-    restoreInventoryFromSave(data);
-    const restoredBankSlots = restoreBankFromSave(data);
-    if (typeof setBankCapacity === "function") {
-      const savedCapacity = (typeof data?.bankCapacity === "number" && Number.isFinite(data.bankCapacity))
-        ? (data.bankCapacity | 0)
-        : ((typeof getBankCapacity === "function") ? (getBankCapacity() | 0) : DEFAULT_BANK_CAPACITY);
-      setBankCapacity(Math.max(savedCapacity, restoredBankSlots), { silent: true });
-    }
-
-    for (const slot of EQUIP_SLOTS) {
-      equipment[slot] = null;
-    }
-    if (data?.equipment) {
       for (const slot of EQUIP_SLOTS) {
-        equipment[slot] = data.equipment[slot] ?? null;
-        if (equipment[slot] && (!Items[equipment[slot]] || Items[equipment[slot]].ammo)) {
-          equipment[slot] = null;
+        equipment[slot] = null;
+      }
+      if (data?.equipment) {
+        for (const slot of EQUIP_SLOTS) {
+          equipment[slot] = data.equipment[slot] ?? null;
+          if (equipment[slot] && (!Items[equipment[slot]] || Items[equipment[slot]].ammo)) {
+            repairReasons.push(`equipment_invalid_${slot}`);
+            equipment[slot] = null;
+          }
         }
       }
-    }
 
-    if (typeof data?.zoom === "number") setZoom(data.zoom);
-    if (typeof applyQuestSnapshot === "function") {
-      applyQuestSnapshot(data?.quests ?? null);
+      if (Object.prototype.hasOwnProperty.call(data, "zoom") && !Number.isFinite(data?.zoom)) {
+        repairReasons.push("zoom_invalid");
+      }
+      if (Number.isFinite(data?.zoom)) setZoom(data.zoom);
+      if (typeof applyQuestSnapshot === "function") {
+        applyQuestSnapshot(data?.quests ?? null);
+      }
+      renderAfterLoad();
+      finalizeLoadRepairReport(true, repairReasons);
+      return true;
+    } catch (err) {
+      warnLoadIssue("Failed to restore save payload.", err);
+      repairReasons.push("restore_exception");
+      finalizeLoadRepairReport(false, repairReasons);
+      return false;
     }
-    renderAfterLoad();
   }
 
-  return { serialize, deserialize };
+  return { serialize, deserialize, getLastLoadRepairReport };
 }

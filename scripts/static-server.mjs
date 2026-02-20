@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
+const HOST = "127.0.0.1";
+const MAX_PORT_RETRIES = 20;
 
 function parsePort(argv) {
   const idx = argv.findIndex((a) => a === "--port" || a === "-p");
@@ -14,7 +16,7 @@ function parsePort(argv) {
   return Number.isFinite(envPort) && envPort > 0 ? envPort : 8000;
 }
 
-const port = parsePort(process.argv.slice(2));
+const basePort = parsePort(process.argv.slice(2));
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -70,6 +72,41 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(port, "127.0.0.1", () => {
-  process.stdout.write(`classic-rpg dev server: http://127.0.0.1:${port}\n`);
+let activePort = basePort;
+let retryCount = 0;
+
+function startServer(port) {
+  activePort = port;
+  server.removeAllListeners("listening");
+  server.once("listening", () => {
+    if (retryCount > 0) {
+      process.stdout.write(
+        `Port ${basePort} was busy; running on http://${HOST}:${activePort} instead\n`
+      );
+      return;
+    }
+    process.stdout.write(`classic-rpg dev server: http://${HOST}:${activePort}\n`);
+  });
+  server.listen(port, HOST);
+}
+
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE" && retryCount < MAX_PORT_RETRIES) {
+    retryCount += 1;
+    startServer(basePort + retryCount);
+    return;
+  }
+
+  if (err && err.code === "EADDRINUSE") {
+    process.stderr.write(
+      `Unable to start dev server: ports ${basePort}-${basePort + MAX_PORT_RETRIES} are in use.\n`
+    );
+    process.exit(1);
+    return;
+  }
+
+  process.stderr.write(`Dev server failed to start: ${err?.message || String(err)}\n`);
+  process.exit(1);
 });
+
+startServer(basePort);

@@ -44,6 +44,14 @@ async function applySavePatch(page, patch) {
         .map((s) => ({ id: String(s.id), qty: Math.max(1, s.qty | 0) }));
     }
 
+    if (patchData.towns && typeof patchData.towns === "object") {
+      data.towns = patchData.towns;
+    }
+
+    if (patchData.projects && typeof patchData.projects === "object") {
+      data.projects = patchData.projects;
+    }
+
     localStorage.setItem(saveKey, JSON.stringify(data));
     return window.__classicRpg.loadNow();
   }, patch);
@@ -61,6 +69,14 @@ async function setSkillsXp(page, skills) {
 
 async function setInventory(page, inv) {
   await applySavePatch(page, { inv });
+}
+
+async function setTownData(page, townData) {
+  await applySavePatch(page, { towns: townData });
+}
+
+async function setProjectsData(page, projectsData) {
+  await applySavePatch(page, { projects: projectsData });
 }
 
 test("boot, debug API, zone swap, save/load", async ({ page }) => {
@@ -94,8 +110,6 @@ test("boot, debug API, zone swap, save/load", async ({ page }) => {
   expect(smithBankBeforeUnlock.ok).toBeFalsy();
   expect(smithBankBeforeUnlock.reason).toBe("no_entity");
 
-  await setWalletGold(page, 10000);
-
   const nearBlacksmith = await page.evaluate(() => {
     return window.__classicRpg.teleport(53, 33, { requireWalkable: true });
   });
@@ -105,19 +119,42 @@ test("boot, debug API, zone swap, save/load", async ({ page }) => {
     return window.__classicRpg.interactTile(52, 33);
   });
   expect(talkBlacksmith.ok).toBeTruthy();
-  expect(talkBlacksmith.kind).toBe("quest_npc");
-  await page.waitForFunction(() => window.__classicRpg.getState().windowsOpen.blacksmith === true);
+  expect(talkBlacksmith.kind).toBe("project_npc");
+  // Blacksmith now opens Town Projects directly
+  await page.waitForFunction(() => window.__classicRpg.getState().windowsOpen.townProjects === true);
 
-  await page.click("#blacksmithUpgradeSmithBankBtn");
+  // Setup storage project as complete via save patch
+  // This simulates the player having completed the "Blacksmith Storage" town project
+  await setTownData(page, {
+    rivermoor: {
+      renown: 50,
+      donations: 0,
+      milestones: 0
+    }
+  });
 
-  const goldAfterUpgrade = await page.evaluate(() => window.__classicRpg.getGold());
-  expect(goldAfterUpgrade).toBe(0);
+  await setProjectsData(page, {
+    rivermoor: {
+      dock: { state: "locked", fundedAt: 0, completedAt: 0, buildTimeMs: 15000 },
+      storage: { state: "complete", fundedAt: 0, completedAt: 1000, buildTimeMs: 18000 },
+      hearth: { state: "locked", fundedAt: 0, completedAt: 0, buildTimeMs: 17000 },
+      flourishing: { state: "locked", fundedAt: 0, completedAt: 0, buildTimeMs: 0 }
+    }
+  });
 
+  // Reload to apply the project completion and spawn the chest
+  await page.evaluate(() => window.__classicRpg.loadNow());
+
+  // Verify the chest now appears
   const smithBankAfterUnlock = await page.evaluate(() => {
     return window.__classicRpg.interactTile(53, 34);
   });
   expect(smithBankAfterUnlock.ok).toBeTruthy();
   expect(smithBankAfterUnlock.kind).toBe("bank");
+
+  // Close town projects window
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__classicRpg.getState().windowsOpen.townProjects === false);
 
   const ladders = await page.evaluate(() => window.__classicRpg.getLadders());
   expect(ladders.overworldDown).toBeTruthy();
@@ -390,4 +427,181 @@ test("crude armor smithing supports level-gated recipes up to level 10", async (
     body: window.__classicRpg.getItemQty("crude_body")
   }));
   expect(highCraftQty.body).toBeGreaterThanOrEqual(1);
+});
+
+test("Town Projects window renders via Blacksmith button", async ({ page }) => {
+  await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+
+  await page.waitForFunction(() => {
+    return typeof window.__classicRpg === "object" && typeof window.__classicRpg.getState === "function";
+  });
+
+  // Go to Blacksmith
+  const nearBlacksmith = await page.evaluate(() => {
+    return window.__classicRpg.teleport(53, 33, { requireWalkable: true });
+  });
+  expect(nearBlacksmith).toBeTruthy();
+
+  // Interact with Blacksmith to open window
+  const talkBlacksmith = await page.evaluate(() => {
+    return window.__classicRpg.interactTile(52, 33);
+  });
+  expect(talkBlacksmith.ok).toBeTruthy();
+  expect(talkBlacksmith.kind).toBe("project_npc");
+  // Blacksmith now opens Town Projects directly
+  await page.waitForFunction(() => window.__classicRpg.getState().windowsOpen.townProjects === true);
+
+  // Verify Town Projects is open (no Blacksmith legacy window)
+  const townProjOpen = await page.evaluate(() => {
+    return window.__classicRpg.getState().windowsOpen.townProjects === true;
+  });
+  expect(townProjOpen).toBeTruthy();
+
+  // Blacksmith window should NOT be open
+  const blacksmithClosed = await page.evaluate(() => {
+    return window.__classicRpg.getState().windowsOpen.blacksmith === false;
+  });
+  expect(blacksmithClosed).toBeTruthy();
+
+  // Wait for project card to render (Blacksmith opens single-view focused on "storage" project)
+  const projectCards = await page.locator(".projectRow").count();
+  expect(projectCards).toBe(1);
+
+  // Verify the storage project is visible (Blacksmith's focused project)
+  const storageCard = page.locator(".projectRow", { hasText: "Storage" });
+  await expect(storageCard).toBeVisible();
+
+  // Project NPC single-view is locked (except mayor), so no "View all" button here.
+  const viewAllBtn = page.locator("button", { hasText: "View all" });
+  await expect(viewAllBtn).toHaveCount(0);
+
+  // Verify renown display is present (in Town Projects grid)
+  const renownDisplay = page.locator("#projectsRenownPill");
+  await expect(renownDisplay).toBeVisible();
+});
+
+test("malformed save payload is normalized on load", async ({ page }) => {
+  await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+
+  await page.waitForFunction(() => {
+    return typeof window.__classicRpg === "object" && typeof window.__classicRpg.getState === "function";
+  });
+
+  const result = await page.evaluate(() => {
+    window.__classicRpg.saveNow();
+
+    let saveKey = null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = String(localStorage.key(i) || "");
+      if (k.includes("classic_inspired_rpg_save_v10_quiver_loot_health_windows")) {
+        saveKey = k;
+        break;
+      }
+    }
+    if (!saveKey) return { ok: false, reason: "missing_save_key" };
+
+    const raw = localStorage.getItem(saveKey);
+    if (!raw) return { ok: false, reason: "missing_save_raw" };
+
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return { ok: false, reason: "invalid_existing_save_json" };
+    }
+
+    data.activeZone = "bad_zone_key";
+    data.player = {
+      ...(data.player || {}),
+      x: 999999,
+      y: -999999,
+      hp: "bad_hp",
+      maxHp: -999
+    };
+    data.wallet = { ...(data.wallet || {}), gold: -5000 };
+    data.quiver = { ...(data.quiver || {}), wooden_arrow: -10 };
+    data.bankCapacity = 999999;
+    data.zoom = "not_a_number";
+
+    localStorage.setItem(saveKey, JSON.stringify(data));
+
+    const loaded = window.__classicRpg.loadNow();
+    const repairReport = window.__classicRpg.getLoadRepairReport?.() || null;
+    const state = window.__classicRpg.getState();
+    const teleportResult = window.__classicRpg.teleport(state.player.x, state.player.y, { requireWalkable: true });
+    const teleportOk = (teleportResult && typeof teleportResult === "object")
+      ? !!teleportResult.ok
+      : !!teleportResult;
+
+    return {
+      ok: true,
+      loaded,
+      zone: state.zone,
+      player: state.player,
+      gold: window.__classicRpg.getGold(),
+      teleportOk,
+      repairReport
+    };
+  });
+
+  expect(result.ok).toBeTruthy();
+  expect(result.loaded).toBeTruthy();
+  expect(result.zone).toBe("overworld");
+  expect(Number.isFinite(result.player.x)).toBeTruthy();
+  expect(Number.isFinite(result.player.y)).toBeTruthy();
+  expect(result.player.x).toBeGreaterThanOrEqual(0);
+  expect(result.player.y).toBeGreaterThanOrEqual(0);
+  expect(result.player.maxHp).toBeGreaterThan(0);
+  expect(result.player.hp).toBeGreaterThanOrEqual(0);
+  expect(result.player.hp).toBeLessThanOrEqual(result.player.maxHp);
+  expect(result.gold).toBe(0);
+  expect(result.teleportOk).toBeTruthy();
+  expect(result.repairReport).toBeTruthy();
+  expect(result.repairReport.ok).toBeTruthy();
+  expect(result.repairReport.repaired).toBeTruthy();
+  expect(Array.isArray(result.repairReport.reasons)).toBeTruthy();
+  expect(result.repairReport.reasons.length).toBeGreaterThan(0);
+  expect(result.repairReport.reasons).toContain("active_zone_fallback");
+  expect(result.repairReport.reasons).toContain("wallet_gold_clamped");
+});
+
+test("runtime guard contains thrown action completion callback", async ({ page }) => {
+  await page.goto("/?test=1", { waitUntil: "domcontentloaded" });
+
+  await page.waitForFunction(() => {
+    return typeof window.__classicRpg === "object" && typeof window.__classicRpg.getState === "function";
+  });
+
+  const result = await page.evaluate(() => {
+    const armed = window.__classicRpg.triggerActionCompleteError();
+    if (!armed) return { ok: false, reason: "trigger_unavailable" };
+
+    let tickOk = false;
+    let state = null;
+    try {
+      state = window.__classicRpg.tickMs(16);
+      tickOk = !!state;
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "tick_threw",
+        message: String(err?.message || err)
+      };
+    }
+
+    const secondState = window.__classicRpg.tickMs(16);
+    return {
+      ok: true,
+      tickOk,
+      zone: state?.zone,
+      playerHp: state?.player?.hp,
+      secondTickOk: !!secondState
+    };
+  });
+
+  expect(result.ok).toBeTruthy();
+  expect(result.tickOk).toBeTruthy();
+  expect(result.secondTickOk).toBeTruthy();
+  expect(result.zone).toBeTruthy();
+  expect(result.playerHp).toBeGreaterThan(0);
 });

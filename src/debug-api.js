@@ -5,6 +5,7 @@ export function createDebugAPI(deps) {
     getActiveZone,
     inv,
     wallet,
+    Items,
     player,
     mobs,
     resources,
@@ -26,8 +27,15 @@ export function createDebugAPI(deps) {
     getCurrentSaveKey,
     serialize,
     deserialize,
+    getLastLoadRepairReport,
     getQuestSnapshot,
     emitQuestEvent,
+    getTownRenown,
+    grantTownRenown,
+    addGold,
+    addToInventory,
+    renderInv,
+    forceActionCompleteError,
     clamp,
     update,
     render
@@ -61,8 +69,43 @@ export function createDebugAPI(deps) {
         interactables: interactables.length | 0,
         lootPiles: groundLoot.size | 0
       },
+      interactables: Array.from(interactables).map(it => ({
+        type: it?.type,
+        x: it?.x,
+        y: it?.y,
+        npcId: it?.npcId,
+        name: it?.name
+      })),
       windowsOpen: { ...windowsOpen }
     };
+  }
+
+  function addStackToInventory(itemId, qty) {
+    const id = String(itemId || "");
+    const amount = Math.max(0, qty | 0);
+    if (!id || amount <= 0) return 0;
+    const item = Items?.[id];
+
+    if (item?.stack) {
+      const slot = inv.find((s) => s && s.id === id);
+      if (slot) {
+        slot.qty = Math.max(1, (slot.qty | 0) + amount);
+        return amount;
+      }
+      const empty = inv.findIndex((s) => !s);
+      if (empty < 0) return 0;
+      inv[empty] = { id, qty: amount };
+      return amount;
+    }
+
+    let added = 0;
+    for (let i = 0; i < amount; i++) {
+      const empty = inv.findIndex((s) => !s);
+      if (empty < 0) break;
+      inv[empty] = { id, qty: 1 };
+      added++;
+    }
+    return added;
   }
 
   function mountDebugApi() {
@@ -127,8 +170,11 @@ export function createDebugAPI(deps) {
       loadNow: () => {
         const raw = localStorage.getItem(getCurrentSaveKey());
         if (!raw) return false;
-        deserialize(raw);
-        return true;
+        return !!deserialize(raw);
+      },
+      getLoadRepairReport: () => {
+        if (typeof getLastLoadRepairReport !== "function") return null;
+        return getLastLoadRepairReport();
       },
       clearSave: () => {
         localStorage.removeItem(getCurrentSaveKey());
@@ -139,6 +185,49 @@ export function createDebugAPI(deps) {
         update(dt);
         render();
         return getDebugState();
+      },
+      triggerActionCompleteError: () => {
+        if (typeof forceActionCompleteError !== "function") return false;
+        return !!forceActionCompleteError();
+      },
+      projectKit: (options = {}) => {
+        const targetRenown = Math.max(0, (options.renown ?? 70) | 0);
+        const targetGold = Math.max(0, (options.gold ?? 2000) | 0);
+        const items = options.items || {
+          log: 100,
+          iron_bar: 15,
+          cooked_food: 15,
+          crude_bar: 5
+        };
+
+        if (typeof getTownRenown === "function" && typeof grantTownRenown === "function") {
+          const current = getTownRenown("rivermoor") | 0;
+          const delta = Math.max(0, targetRenown - current);
+          if (delta > 0) grantTownRenown("rivermoor", delta, "Debug project kit applied.");
+        }
+
+        if (typeof addGold === "function") {
+          const have = Math.max(0, wallet?.gold | 0);
+          const delta = Math.max(0, targetGold - have);
+          if (delta > 0) addGold(delta);
+        }
+
+        if (items && typeof items === "object") {
+          for (const [id, qty] of Object.entries(items)) {
+            const amount = Math.max(0, qty | 0);
+            if (amount <= 0) continue;
+            if (typeof addToInventory === "function") {
+              addStackToInventory(id, amount);
+            }
+          }
+          if (typeof renderInv === "function") renderInv();
+        }
+
+        return {
+          ok: true,
+          renown: (typeof getTownRenown === "function") ? getTownRenown("rivermoor") : null,
+          gold: Math.max(0, wallet?.gold | 0)
+        };
       }
     };
 

@@ -112,8 +112,16 @@ Available debug helpers:
 - `window.__classicRpg.teleport(x, y, { requireWalkable: true })`
 - `window.__classicRpg.saveNow()`
 - `window.__classicRpg.loadNow()`
+- `window.__classicRpg.getLoadRepairReport()` (QA: shows if load normalization repaired stale/corrupt save values)
 - `window.__classicRpg.clearSave()`
 - `window.__classicRpg.tickMs(16)`
+
+Example QA output:
+
+```javascript
+window.__classicRpg.getLoadRepairReport()
+// { ok: true, repaired: true, reasons: ["active_zone_fallback", "wallet_gold_clamped"], timestamp: 1771468800000 }
+```
 
 ## Smoke Test
 Run automated smoke checks with Playwright:
